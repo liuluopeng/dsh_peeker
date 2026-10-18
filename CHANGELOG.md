@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.8 — 2026-10-18
+
+- Add a stream heartbeat and stale-stream recovery. The server emits a data ping every 15 seconds; a visible page that has received no frame for 30 seconds drops the old EventSource and requests a fresh snapshot. This makes the phone recover immediately after the browser suspends the tab, instead of appearing to update only every few minutes.
+- Retry Screen Wake Lock on load, on every visibility change, and every 30 seconds. A no-input page cannot force a lock the OS denies, but the retry succeeds where the browser only needed a visible/active document.
+
 ## 0.5.7 — 2026-10-18
 
 - Change the default `contentWidth` from `1200px` to `fill`. The old fixed cap widened the pane but left a 1200px text column centered inside it; `fill` maps to a 10000px cap so the official `width: 100%` rules let the transcript, assistant/user text, tables, and composer use the whole conversation pane. A number from 640 to 2400 still pins a fixed measure, and 0 keeps the official width.

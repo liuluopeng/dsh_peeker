@@ -180,6 +180,8 @@
   let streamSource = null
   let streamKey = ''
   let streamOpen = false
+  let lastStreamAt = 0
+  let lastReopenAt = 0
 
   const el = (tag, className, text) => {
     const node = document.createElement(tag)
@@ -473,6 +475,23 @@
     }
     streamKey = ''
     streamOpen = false
+    lastStreamAt = 0
+  }
+
+  /**
+   * A phone browser may suspend the page (screen off, background tab, power
+   * saver) without firing EventSource.onerror. The server sends a data ping
+   * every 15 seconds; if none arrived for 30 seconds while the page is visible,
+   * close the old socket and request a fresh snapshot immediately instead of
+   * leaving the pane frozen.
+   */
+  function ensureStreamFresh() {
+    if (document.visibilityState !== 'visible' || panes.size === 0) return
+    const now = Date.now()
+    const stale = streamSource === null || !streamOpen || now - lastStreamAt > 30000
+    if (!stale || now - lastReopenAt < 10000) return
+    lastReopenAt = now
+    openSharedStream(true)
   }
 
   /**
@@ -505,6 +524,7 @@
     source.onopen = () => {
       if (streamSource !== source) return
       streamOpen = true
+      lastStreamAt = Date.now()
       for (const pane of panes.values()) {
         pane.streamState = 'open'
         paintPane(pane)
@@ -520,6 +540,7 @@
     }
     source.onmessage = (message) => {
       if (streamSource !== source) return
+      lastStreamAt = Date.now()
       try {
         dispatchFrame(JSON.parse(message.data))
       } catch { /* ignore a malformed frame */ }
@@ -852,6 +873,7 @@
       // image load can move the tail without a transcript event.
       scrollPane(pane)
     }
+    ensureStreamFresh()
     clockEl.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   }
 
@@ -872,16 +894,21 @@
   let wakeLock = null
   const keepAwake = async () => {
     try {
-      if (navigator.wakeLock && document.visibilityState === 'visible') {
+      if (navigator.wakeLock && document.visibilityState === 'visible' && wakeLock === null) {
         wakeLock = await navigator.wakeLock.request('screen')
+        wakeLock.addEventListener('release', () => { wakeLock = null })
       }
-    } catch { /* unsupported or refused */ }
+    } catch { wakeLock = null /* unsupported or refused */ }
   }
   // Wake Lock normally asks for a user gesture; the page deliberately has none,
-  // so try immediately and again whenever the tab becomes visible.
+  // so retry on load, on every visibility change, and every 30 seconds.
   void keepAwake()
+  setInterval(() => {
+    if (document.visibilityState === 'visible') void keepAwake()
+  }, 30000)
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
+      ensureStreamFresh()
       void sync()
       void keepAwake()
     }

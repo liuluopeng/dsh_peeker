@@ -387,7 +387,13 @@ export function apply(ctx, config) {
     res.on('close', stop)
     const ping = setInterval(() => {
       if (!res.writableEnded && !res.destroyed) {
-        try { res.write(': ping\n\n') } catch { stop() }
+        try {
+          // The comment keeps proxies warm; the data frame gives the page a
+          // heartbeat it can observe, so it can detect a silently suspended
+          // mobile connection and force a fresh stream on the next visible frame.
+          res.write(': ping\n\n')
+          sendEvent(res, { t: 'ping', at: Date.now() })
+        } catch { stop() }
       }
     }, 15000)
     const followSession = async (sessionId, parentSessionId) => {

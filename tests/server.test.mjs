@@ -161,6 +161,8 @@ test('serves the light single-page peek UI', async () => {
   assert.doesNotMatch(body, /pointerdown/)
   assert.match(body, /applyEvent\(pane, record\.event, true\)/)
   assert.match(body, /parentSessionId/)
+  assert.match(body, /ensureStreamFresh/)
+  assert.match(body, /lastStreamAt/)
   assert.match(body, /font: 15px/)
 })
 
