@@ -3,3 +3,6 @@ node_modules/
 *.log
 .env
 coverage/
+
+# Preview screenshots stay local; do not publish them.
+docs/*.png

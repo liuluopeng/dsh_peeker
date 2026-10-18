@@ -17,10 +17,6 @@ A deliberately small, read-only, **light** LAN view of the active DSH sessions.
 - A live `turn/end` makes the whole screen flash three times (and vibrates when the browser allows it).
 - The same host plugin can enlarge the official DSH UI's fonts and widen its conversation column from `cordis.patch.yml`, without a patched DMG.
 
-![Live reasoning, running tool and background-command output](docs/preview-live.png)
-
-![4-pane layout](docs/preview-4.png)
-
 ## Install
 
 This repository is a DSH **bundle**: `package.json` declares `dsh.bundle.patch`, and `cordis.patch.yml` inserts the host row.
