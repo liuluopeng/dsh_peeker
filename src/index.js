@@ -107,6 +107,37 @@ async function listSessions(ctx) {
     .sort((left, right) => Number(right.running) - Number(left.running) || right.updatedAt - left.updatedAt)
 }
 
+/** Keep terminal job rows long enough for the page to render their final state. */
+const JOB_KEEP_MS = 12_000
+
+/** Client-safe projection of one background job. */
+function publicJob(job) {
+  return {
+    id: String(job?.id ?? ''),
+    kind: String(job?.kind ?? ''),
+    label: String(job?.label ?? ''),
+    status: String(job?.status ?? ''),
+    progress: typeof job?.progress === 'string' ? job.progress : undefined,
+    detail: typeof job?.detail === 'string' ? job.detail : undefined,
+    startedAt: Number.isFinite(Number(job?.startedAt)) ? Number(job.startedAt) : 0,
+    finishedAt: Number.isFinite(Number(job?.finishedAt)) ? Number(job.finishedAt) : undefined,
+    output: {
+      total: Number(job?.output?.total) || 0,
+      earliest: Number(job?.output?.earliest) || 0,
+    },
+  }
+}
+
+/** Client-safe projection of one retained output chunk. */
+function publicChunk(chunk) {
+  return {
+    at: Number(chunk?.at) || 0,
+    text: String(chunk?.text ?? ''),
+    channel: chunk?.channel,
+    gapBefore: chunk?.gapBefore === true ? true : undefined,
+  }
+}
+
 /** LAN IPv4 addresses, only for the startup log. */
 function lanAddresses() {
   const addresses = []
@@ -164,6 +195,66 @@ export function apply(ctx, config) {
     sendJson(res, 404, { error: 'not found' })
   }
 
+  /**
+   * Forward the session's background-job roster and live output on the same SSE
+   * stream as the transcript. One connection per pane keeps the browser below its
+   * six-connection HTTP/1.1 limit even with four panes.
+   */
+  function startJobStreaming(sessionId, res, signal) {
+    const jobController = ctx.get('jobController')
+    if (jobController === undefined) return () => {}
+    const follows = new Map()
+    const send = (payload) => {
+      if (!signal.aborted && !res.writableEnded && !res.destroyed) sendEvent(res, payload)
+    }
+    const stop = () => {
+      for (const controller of follows.values()) controller.abort()
+      follows.clear()
+    }
+    const followJob = (job) => {
+      const controller = new AbortController()
+      follows.set(job.id, controller)
+      void (async () => {
+        try {
+          for await (const frame of jobController.follow({ sessionId, jobId: job.id }, controller.signal)) {
+            if (controller.signal.aborted) break
+            if (frame?.type === 'opened') send({ t: 'job', job: publicJob(frame.job) })
+            else if (frame?.type === 'output') {
+              send({ t: 'job-output', jobId: job.id, chunks: (frame.chunks ?? []).map(publicChunk) })
+            } else if (frame?.type === 'status') {
+              send({ t: 'job-status', job: publicJob(frame.job) })
+            }
+          }
+        } catch (error) {
+          if (!controller.signal.aborted) send({ t: 'job-error', jobId: job.id, message: String(error?.message ?? error) })
+        } finally {
+          follows.delete(job.id)
+        }
+      })()
+    }
+    void (async () => {
+      try {
+        for await (const frame of jobController.list({ sessionId }, signal)) {
+          if (signal.aborted) break
+          if (frame?.type !== 'rows') continue
+          const jobs = (Array.isArray(frame.jobs) ? frame.jobs : []).filter((job) => {
+            if (job.status === 'running' || job.status === 'stopping') return true
+            const finished = Number(job.finishedAt) || 0
+            return finished > 0 && Date.now() - finished <= JOB_KEEP_MS
+          })
+          send({ t: 'jobs', jobs: jobs.map(publicJob) })
+          for (const job of jobs) {
+            if (job.status !== 'running' && job.status !== 'stopping') continue
+            if (job.id && !follows.has(job.id)) followJob(job)
+          }
+        }
+      } catch (error) {
+        if (!signal.aborted) send({ t: 'jobs-error', message: String(error?.message ?? error) })
+      }
+    })()
+    return stop
+  }
+
   async function handleStream(req, res, url) {
     if (disposed) {
       sendJson(res, 503, { error: 'plugin disposed' })
@@ -184,8 +275,11 @@ export function apply(ctx, config) {
     const controller = new AbortController()
     const entry = { controller, res }
     streams.add(entry)
+    const jobAbort = new AbortController()
+    const stopJobs = startJobStreaming(sessionId, res, jobAbort.signal)
     const stop = () => {
       controller.abort()
+      jobAbort.abort()
       streams.delete(entry)
     }
     req.on('close', stop)
@@ -220,6 +314,8 @@ export function apply(ctx, config) {
       }
     } finally {
       clearInterval(ping)
+      jobAbort.abort()
+      stopJobs()
       streams.delete(entry)
       if (!res.writableEnded) res.end()
     }

@@ -1,7 +1,7 @@
 {
   "name": "lx_dsh_peek",
-  "version": "0.2.0",
-  "description": "Read-only, light-themed LAN peek at active DSH sessions: auto 1/2/3/4-pane layout, orientation-aware, flashes three times when a task ends.",
+  "version": "0.3.0",
+  "description": "Read-only, light-themed LAN peek at active DSH sessions: live reasoning, tool and background-command output, animated running state, 1/2/3/4 panes, orientation-aware layout, and a three-flash completion cue.",
   "type": "module",
   "main": "src/index.js",
   "exports": {

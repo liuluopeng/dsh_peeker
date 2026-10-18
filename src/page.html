@@ -24,7 +24,7 @@
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
   body {
     display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
-    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
   }
   header {
     flex: 0 0 auto;
@@ -37,7 +37,7 @@
   .dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }
   .dot.busy { background: var(--ok); box-shadow: 0 0 0 3px rgba(22, 138, 79, .14); animation: pulse 1.2s infinite; }
   @keyframes pulse { 50% { opacity: .45; } }
-  .status { min-width: 0; overflow: hidden; color: var(--muted); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
+  .status { min-width: 0; overflow: hidden; color: var(--muted); font-size: 13px; white-space: nowrap; text-overflow: ellipsis; }
   main {
     flex: 1 1 auto; min-height: 0; display: grid; gap: 8px;
     padding: 8px calc(8px + env(safe-area-inset-right)) 8px calc(8px + env(safe-area-inset-left));
@@ -70,29 +70,35 @@
     padding: 7px 10px; border-bottom: 1px solid var(--line); background: #f8fafc;
   }
   .pane-title {
-    min-width: 0; overflow: hidden; font-size: 12px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis;
+    min-width: 0; overflow: hidden; font-size: 13.5px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis;
   }
-  .pane-meta { flex: 0 0 auto; display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+  .pane-meta { flex: 0 0 auto; display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .elapsed { color: var(--muted); font-variant-numeric: tabular-nums; }
   .pane-meta .dot { width: 6px; height: 6px; }
+  .pane-meta .elapsed::before { content: ' · '; }
   .pane-body {
     flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain;
-    display: flex; flex-direction: column; gap: 7px; padding: 8px;
+    display: flex; flex-direction: column; gap: 8px; padding: 9px;
+    font-size: 15px;
   }
-  .pane-empty { margin: auto; color: var(--muted); font-size: 12px; text-align: center; padding: 12px; }
+  .pane-empty { margin: auto; color: var(--muted); font-size: 14px; text-align: center; padding: 12px; }
   .item { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; background: var(--panel); overflow-wrap: anywhere; }
   .item.user { background: var(--user); border-color: #cfe3fb; }
   .item.tool { background: var(--tool); }
   .item.error { border-color: #f0b4b4; }
   .item.error .who { color: var(--err); }
-  .who { display: flex; justify-content: space-between; gap: 6px; margin-bottom: 3px; color: var(--muted); font-size: 10px; letter-spacing: .03em; text-transform: uppercase; }
+  .who { display: flex; justify-content: space-between; gap: 6px; margin-bottom: 4px; color: var(--muted); font-size: 11px; letter-spacing: .03em; text-transform: uppercase; }
+  .who-right { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
   .body { white-space: pre-wrap; word-break: break-word; }
-  .reasoning { margin-top: 5px; padding-left: 7px; border-left: 2px solid #cbd5e1; color: #475569; font-size: 12px; white-space: pre-wrap; }
+  .reasoning { margin-top: 6px; padding-left: 8px; border-left: 2px solid #cbd5e1; color: #475569; font-size: 14px; white-space: pre-wrap; }
+  .reasoning[hidden] { display: none; }
+  .reasoning-label { margin-bottom: 2px; color: var(--muted); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
   details { margin-top: 5px; }
   summary { cursor: pointer; color: var(--accent); font-size: 11px; }
   pre {
     margin: 5px 0 0; max-height: 32vh; overflow: auto; padding: 6px 7px; border-radius: 6px;
     background: #f1f5f9; color: #334155; white-space: pre-wrap; word-break: break-word;
-    font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   .cursor { color: var(--accent); animation: blink 1s steps(2, start) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
@@ -100,7 +106,7 @@
     flex: 0 0 auto; display: flex; justify-content: space-between; gap: 8px;
     padding: 5px calc(12px + env(safe-area-inset-right)) calc(5px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
     background: rgba(255, 255, 255, .95); border-top: 1px solid var(--line);
-    color: var(--muted); font-size: 10px;
+    color: var(--muted); font-size: 11px;
   }
   #flash { position: fixed; inset: 0; z-index: 9999; background: #ffe066; opacity: 0; pointer-events: none; }
   #toast {
@@ -110,7 +116,35 @@
     background: #e8f7ee; color: #166534; font-size: 13px; transition: .2s;
   }
   #toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
-  @media (prefers-reduced-motion: reduce) { .dot.busy, .cursor { animation: none; } }
+  .spinner {
+    flex: 0 0 auto; width: 10px; height: 10px; border: 2px solid #cbd5e1;
+    border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .activity {
+    display: none; flex: 0 0 auto; width: 16px; height: 3px; border-radius: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  }
+  .pane[data-running="true"] .activity { display: block; animation: activity 1.2s linear infinite; }
+  @keyframes activity { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+  .tool-state { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); text-transform: none; }
+  .jobs {
+    flex: 0 0 auto; display: flex; flex-direction: column; gap: 5px;
+    max-height: 38%; overflow: auto; padding: 6px 8px;
+    border-bottom: 1px solid var(--line); background: #f8fafc;
+  }
+  .job { border: 1px solid var(--line); border-radius: 7px; background: var(--panel); padding: 5px 7px; }
+  .job-head { display: flex; align-items: center; gap: 5px; min-width: 0; }
+  .job-label { min-width: 0; flex: 1 1 auto; overflow: hidden; font-size: 13px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+  .job-status { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 11px; }
+  .job-progress { margin-top: 2px; color: var(--accent); font-size: 11px; }
+  .job-more { color: var(--muted); font-size: 11px; padding: 1px 4px; }
+  .job-output {
+    margin: 4px 0 0; max-height: 110px; overflow: auto; padding: 5px 6px; border-radius: 5px;
+    background: #f1f5f9; color: #334155; white-space: pre-wrap; word-break: break-word;
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-reduced-motion: reduce) { .dot.busy, .cursor, .spinner, .activity { animation: none; } }
 </style>
 </head>
 <body>
@@ -130,6 +164,8 @@
   const MAX_PANES = 4
   const KEEP_COMPLETED_MS = 20000
   const POLL_MS = 3000
+  const JOB_KEEP_MS = 12000
+  const JOB_OUTPUT_LIMIT = 12000
   const panesEl = document.getElementById('panes')
   const dotEl = document.getElementById('dot')
   const statusEl = document.getElementById('status')
@@ -216,12 +252,19 @@
   function paintPane(pane) {
     pane.titleEl.textContent = pane.title || pane.id
     pane.dotEl.className = `dot${pane.running ? ' busy' : ''}`
+    pane.root.dataset.running = pane.running ? 'true' : 'false'
     if (pane.running) {
+      if (!pane.startedAt) pane.startedAt = Date.now()
       pane.statusEl.textContent = pane.streamState === 'open'
         ? '运行中'
         : pane.streamState === 'error' ? '重连中…' : '连接中…'
+      pane.elapsedEl.hidden = false
+      pane.elapsedEl.dataset.since = String(pane.startedAt)
     } else {
       pane.statusEl.textContent = pane.completedAt > 0 ? '已完成' : pane.streamState === 'ended' ? '流已结束' : '空闲'
+      pane.elapsedEl.hidden = true
+      delete pane.elapsedEl.dataset.since
+      pane.elapsedEl.textContent = ''
     }
   }
 
@@ -232,7 +275,17 @@
       : item.kind === 'tool' ? `工具 · ${item.name || 'tool'}`
         : item.kind === 'note' ? '系统' : 'DSH'
     who.append(el('span', '', label))
-    who.append(el('span', '', timeOf(item.time)))
+    const whoRight = el('span', 'who-right')
+    if (item.kind === 'tool' && item.done !== true) {
+      const state = el('span', 'tool-state')
+      state.dataset.since = String(Number(item.time) || Date.now())
+      state.append(el('span', 'spinner'))
+      state.append(document.createTextNode('运行中 '))
+      state.append(el('span', 'elapsed'))
+      whoRight.append(state)
+    }
+    whoRight.append(el('span', '', timeOf(item.time)))
+    who.append(whoRight)
     article.append(who)
     if (item.kind === 'tool') {
       article.append(el('div', 'body', item.args || ''))
@@ -248,11 +301,12 @@
     const body = el('div', 'body', item.text || '')
     if (item.live === true) body.append(el('span', 'cursor', ' ▍'))
     article.append(body)
-    if (item.reasoning) {
-      const details = el('details')
-      details.append(el('summary', '', '思考'))
-      details.append(el('div', 'reasoning', cut(item.reasoning, 6000)))
-      article.append(details)
+    if (item.kind === 'assistant') {
+      const reasoning = el('div', 'reasoning')
+      reasoning.hidden = !item.reasoning
+      reasoning.append(el('div', 'reasoning-label', '思考'))
+      reasoning.append(el('div', 'reasoning-text', item.reasoning || ''))
+      article.append(reasoning)
     }
     return article
   }
@@ -283,7 +337,11 @@
     body.textContent = pane.live.text || ''
     body.append(el('span', 'cursor', ' ▍'))
     const reasoning = pane.liveNode.querySelector('.reasoning')
-    if (reasoning !== null) reasoning.textContent = pane.live.reasoning || ''
+    if (reasoning !== null) {
+      const text = reasoning.querySelector('.reasoning-text')
+      if (text !== null) text.textContent = pane.live.reasoning || ''
+      reasoning.hidden = !pane.live.reasoning
+    }
     scrollPane(pane, false)
   }
 
@@ -320,7 +378,7 @@
         pane.items.push({
           kind: 'tool', name: data.name || 'tool', callId: data.callId,
           args: cut(data.arguments === undefined ? '' : data.arguments, 1000),
-          result: null, error: false, time: event.time,
+          result: null, error: false, done: false, time: event.time,
         })
         break
       case 'tool/result': {
@@ -339,6 +397,7 @@
         if (target) {
           target.result = result === '' ? '（无输出）' : result
           target.error = Boolean(data.error) || block.isError === true
+          target.done = true
         } else {
           pane.items.push({ kind: 'note', text: `工具结果：${cut(result || '（空）', 1000)}`, time: event.time })
         }
@@ -347,11 +406,13 @@
       case 'turn/start':
         pane.running = true
         pane.completedAt = 0
+        pane.startedAt = Number(event.time) || Date.now()
         paintPane(pane)
         break
       case 'turn/end':
         pane.running = false
         pane.completedAt = Date.now()
+        pane.startedAt = 0
         paintPane(pane)
         break
       default:
@@ -430,6 +491,110 @@
     }
   }
 
+  function upsertJob(pane, job) {
+    if (!job || typeof job.id !== 'string' || job.id === '') return null
+    const now = Date.now()
+    let state = pane.jobs.get(job.id)
+    if (!state) {
+      state = {
+        id: job.id, kind: '', label: job.id, status: 'running', progress: '', detail: '',
+        startedAt: 0, finishedAt: 0, output: '', lost: false,
+      }
+      pane.jobs.set(job.id, state)
+    }
+    state.kind = job.kind || state.kind
+    state.label = job.label || state.label
+    state.status = job.status || state.status
+    state.progress = job.progress || ''
+    state.detail = job.detail || ''
+    state.startedAt = Number(job.startedAt) || state.startedAt || now
+    const finished = Number(job.finishedAt)
+    if (Number.isFinite(finished) && finished > 0) state.finishedAt = finished
+    if (state.status !== 'running' && state.status !== 'stopping' && !state.finishedAt) state.finishedAt = now
+    return state
+  }
+
+  function applyJobRows(pane, jobs) {
+    const now = Date.now()
+    const seen = new Set()
+    for (const job of Array.isArray(jobs) ? jobs : []) {
+      if (!job || typeof job.id !== 'string' || job.id === '') continue
+      const active = job.status === 'running' || job.status === 'stopping'
+      const finished = Number(job.finishedAt) || 0
+      if (!active && !(finished > 0 && now - finished <= JOB_KEEP_MS)) continue
+      seen.add(job.id)
+      upsertJob(pane, job)
+    }
+    for (const [id, state] of pane.jobs) {
+      if (seen.has(id)) continue
+      if (!state.finishedAt) state.finishedAt = now
+      if (state.status === 'running' || state.status === 'stopping') state.status = 'completed'
+      if (now - state.finishedAt > JOB_KEEP_MS) pane.jobs.delete(id)
+    }
+    renderJobs(pane)
+  }
+
+  function applyJobOutput(pane, jobId, chunks) {
+    const state = pane.jobs.get(jobId)
+    if (!state || !Array.isArray(chunks)) return
+    let text = ''
+    for (const chunk of chunks) {
+      if (!chunk) continue
+      if (chunk.gapBefore === true) state.lost = true
+      text += String(chunk.text ?? '')
+    }
+    if (text === '') return
+    state.output += text
+    if (state.output.length > JOB_OUTPUT_LIMIT) {
+      state.lost = true
+      state.output = state.output.slice(-JOB_OUTPUT_LIMIT)
+    }
+    renderJobs(pane)
+  }
+
+  function renderJobs(pane) {
+    const now = Date.now()
+    const list = [...pane.jobs.values()]
+      .filter((state) => state.status === 'running' || state.status === 'stopping'
+        || (state.finishedAt > 0 && now - state.finishedAt <= JOB_KEEP_MS))
+      .sort((left, right) => {
+        const leftActive = left.status === 'running' || left.status === 'stopping' ? 1 : 0
+        const rightActive = right.status === 'running' || right.status === 'stopping' ? 1 : 0
+        return rightActive - leftActive || right.startedAt - left.startedAt
+      })
+    pane.jobsEl.textContent = ''
+    if (list.length === 0) {
+      pane.jobsEl.hidden = true
+      return
+    }
+    pane.jobsEl.hidden = false
+    for (const state of list.slice(0, 3)) {
+      const running = state.status === 'running' || state.status === 'stopping'
+      const card = el('div', 'job')
+      card.dataset.status = state.status
+      const head = el('div', 'job-head')
+      if (running) head.append(el('span', 'spinner'))
+      head.append(el('span', 'job-label', state.label || state.id))
+      const status = el('span', 'job-status')
+      if (running) {
+        status.dataset.since = String(state.startedAt || now)
+        status.append(document.createTextNode(state.status === 'stopping' ? '停止中 ' : '运行中 '))
+        status.append(el('span', 'elapsed'))
+      } else {
+        status.textContent = state.status === 'failed' ? '失败' : state.status === 'killed' ? '已停止' : '已完成'
+      }
+      head.append(status)
+      card.append(head)
+      if (state.progress) card.append(el('div', 'job-progress', state.progress))
+      const text = `${state.lost ? '…\n' : ''}${state.output || (running ? '等待命令输出…' : '')}`
+      const pre = el('pre', 'job-output', text)
+      card.append(pre)
+      pane.jobsEl.append(card)
+      pre.scrollTop = pre.scrollHeight
+    }
+    if (list.length > 3) pane.jobsEl.append(el('div', 'job-more', `还有 ${list.length - 3} 个命令`))
+  }
+
   function handlePane(pane, payload) {
     if (!payload || typeof payload !== 'object') return
     if (payload.t === 'snapshot') {
@@ -460,6 +625,28 @@
       flashScreen(payload.times)
       return
     }
+    if (payload.t === 'jobs') {
+      applyJobRows(pane, payload.jobs)
+      return
+    }
+    if (payload.t === 'job') {
+      upsertJob(pane, payload.job)
+      renderJobs(pane)
+      return
+    }
+    if (payload.t === 'job-output') {
+      applyJobOutput(pane, payload.jobId, payload.chunks)
+      return
+    }
+    if (payload.t === 'job-status') {
+      upsertJob(pane, payload.job)
+      renderJobs(pane)
+      return
+    }
+    if (payload.t === 'job-error' || payload.t === 'jobs-error') {
+      console.warn('[lx-dsh-peek] job stream:', payload.message)
+      return
+    }
     if (payload.t === 'end') {
       pane.streamState = 'ended'
       closePaneStream(pane)
@@ -480,15 +667,21 @@
     const meta = el('div', 'pane-meta')
     const dot = el('span', 'dot')
     const status = el('span', 'pane-status', '连接中…')
-    meta.append(dot, status)
+    const elapsed = el('span', 'elapsed')
+    elapsed.hidden = true
+    const activity = el('span', 'activity')
+    meta.append(dot, status, elapsed, activity)
     head.append(title, meta)
+    const jobsEl = el('div', 'jobs')
+    jobsEl.hidden = true
     const body = el('div', 'pane-body')
-    root.append(head, body)
+    root.append(head, jobsEl, body)
     panesEl.append(root)
     const pane = {
       id: session.sessionId, title: session.title || session.sessionId, updatedAt: Number(session.updatedAt) || 0,
       running: session.running === true, completedAt: 0, streamState: 'connecting',
       items: [], live: null, liveNode: null, snapshot: false, source: null,
+      startedAt: 0, jobs: new Map(), jobsEl, elapsedEl: elapsed,
       root, titleEl: title, dotEl: dot, statusEl: status, body,
     }
     panes.set(pane.id, pane)
@@ -574,10 +767,36 @@
   window.addEventListener('resize', paintOrientation)
   paintOrientation()
 
-  clockEl.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-  setInterval(() => {
+  function formatElapsed(ms) {
+    const total = Math.max(0, Math.floor(ms / 1000))
+    if (total < 60) return `${total}s`
+    return `${Math.floor(total / 60)}m${String(total % 60).padStart(2, '0')}s`
+  }
+
+  function tick() {
+    const now = Date.now()
+    document.querySelectorAll('[data-since]').forEach((host) => {
+      const since = Number(host.dataset.since)
+      const elapsed = host.classList.contains('elapsed') ? host : host.querySelector('.elapsed')
+      if (elapsed !== null && Number.isFinite(since) && since > 0) {
+        elapsed.textContent = formatElapsed(now - since)
+      }
+    })
+    for (const pane of panes.values()) {
+      let changed = false
+      for (const [id, job] of pane.jobs) {
+        if (job.finishedAt > 0 && now - job.finishedAt > JOB_KEEP_MS) {
+          pane.jobs.delete(id)
+          changed = true
+        }
+      }
+      if (changed) renderJobs(pane)
+    }
     clockEl.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-  }, 1000)
+  }
+
+  tick()
+  setInterval(tick, 1000)
   setInterval(() => { void sync() }, POLL_MS)
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void sync() })
 

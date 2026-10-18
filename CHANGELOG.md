@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 — 2026-10-18
+
+- Auto-expand assistant reasoning in the transcript.
+- Stream live background-job output (bash commands) over the session SSE.
+- Show running tool/job spinners, per-pane and per-job elapsed time, and a pane activity bar.
+- Raise the default font to 15px.
+
 ## 0.2.0 — 2026-10-18
 
 - Light theme by default.

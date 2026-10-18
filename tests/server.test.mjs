@@ -17,7 +17,38 @@ const sessions = [
   },
 ]
 
+const jobStartedAt = Date.now()
+const job = {
+  id: 'bash-test',
+  kind: 'bash',
+  label: 'npm test',
+  owner: 'session-test',
+  status: 'running',
+  startedAt: jobStartedAt,
+  output: { total: 0, earliest: 0 },
+}
+const jobController = {
+  async *list(_request, signal) {
+    yield { type: 'rows', jobs: [job] }
+    await new Promise((resolve) => {
+      if (signal.aborted) resolve()
+      else signal.addEventListener('abort', resolve, { once: true })
+    })
+  },
+  async *follow(_request, signal) {
+    yield { type: 'opened', job, from: 0 }
+    yield { type: 'output', chunks: [{ at: 0, text: 'live output\n', channel: 'stdout' }], next: 12 }
+    await new Promise((resolve) => {
+      if (signal.aborted) resolve()
+      else signal.addEventListener('abort', resolve, { once: true })
+    })
+  },
+}
+
 const ctx = {
+  get(name) {
+    return name === 'jobController' ? jobController : undefined
+  },
   effect(fn) {
     dispose = fn()
     return dispose
@@ -94,6 +125,9 @@ test('serves the light single-page peek UI', async () => {
   assert.match(body, /LX <span>DSH<\/span> Peek/)
   assert.match(body, /id="orientation"/)
   assert.match(body, /MAX_PANES = 4/)
+  assert.match(body, /reasoning-text/)
+  assert.match(body, /job-output/)
+  assert.match(body, /font: 15px/)
 })
 
 test('lists sessions and refuses writes', async () => {
@@ -123,6 +157,8 @@ test('streams a snapshot, deltas, and a completion flash', async () => {
     }
     assert.match(body, /"t":"snapshot"/)
     assert.match(body, /"t":"delta"/)
+    assert.match(body, /"t":"jobs"/)
+    assert.match(body, /"t":"job-output"/)
     assert.match(body, /"t":"flash"/)
   } finally {
     controller.abort()

@@ -5,6 +5,9 @@ A deliberately small, read-only, **light** LAN view of the active DSH sessions.
 - No PIN, no path secret, no relay, no account.
 - No input endpoints: the Host plugin only calls `sessionController.list()` and `sessionController.follow()`.
 - Autodiscovers active (running) sessions every 3 seconds; there is no session picker.
+- Auto-expands assistant reasoning as it streams.
+- Streams live background-job output (running commands) from the Host's `jobController`, with a spinner and elapsed time; running tool calls show the same indicator.
+- Default text size is 15px; the pane header shows a moving activity bar and elapsed time while a turn runs.
 - Layout follows the viewport orientation:
   - portrait: 2 and 3 panes stack as rows;
   - landscape: 2 and 3 panes sit side by side;
@@ -12,6 +15,8 @@ A deliberately small, read-only, **light** LAN view of the active DSH sessions.
   - more than 4 active tasks keeps the first 4 and shows `显示前 4 个`.
 - A finished task keeps its pane for 20 seconds so the final output stays visible, then the pane disappears.
 - A live `turn/end` makes the whole screen flash three times (and vibrates when the browser allows it).
+
+![Live reasoning, running tool and background-command output](docs/preview-live.png)
 
 ![4-pane layout](docs/preview-4.png)
 
@@ -62,7 +67,7 @@ The test boots the plugin with a mock `sessionController`, checks the page, sess
 
 ### Layout
 
-- `src/index.js` — Host plugin, HTTP/SSE listener, session listing and snapshot budget.
+- `src/index.js` — Host plugin, HTTP/SSE listener, session listing and snapshot budget, optional `jobController` forwarding.
 - `src/page.html` — light mobile page, active-task panes, orientation layout, flash.
 - `cordis.patch.yml` — bundle layer that inserts the `lx-dsh-peek` row.
 - `tests/server.test.mjs` — keyless mock test.
