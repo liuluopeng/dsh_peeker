@@ -99,18 +99,30 @@ function sessionTitle(summary) {
 
 /**
  * List sessions newest-running first.
+ *
+ * A subagent child carries its durable parent id so the stream can follow it
+ * with `{ kind: 'subagent', parentSessionId, childSessionId, mode: 'unknown' }`;
+ * a plain `{ kind: 'session' }` address is rejected by the Host with
+ * "subagent Sessions require their durable parent address".
+ *
  * @param {import('@deepseek-ai/cordis').Context} ctx
  */
 async function listSessions(ctx) {
   const value = await ctx.sessionController.list({}, AbortSignal.timeout(8000))
   const items = Array.isArray(value?.items) ? value.items : []
   return items
+    // A subagent row without its durable parent cannot be followed; leave it out
+    // instead of exposing a pane that can only fail.
+    .filter((item) => item?.origin !== 'subagent' || typeof item?.parentSessionId === 'string')
     .map((item) => ({
       sessionId: String(item?.sessionId ?? ''),
       title: sessionTitle(item),
       cwd: typeof item?.cwd === 'string' ? item.cwd : '',
       running: item?.running === true,
       updatedAt: Number.isFinite(Number(item?.updatedAt)) ? Number(item.updatedAt) : 0,
+      ...(item?.origin === 'subagent' && typeof item?.parentSessionId === 'string'
+        ? { parentSessionId: item.parentSessionId }
+        : {}),
     }))
     .filter((item) => item.sessionId !== '')
     .sort((left, right) => Number(right.running) - Number(left.running) || right.updatedAt - left.updatedAt)
@@ -309,23 +321,33 @@ export function apply(ctx, config) {
    * Serve one SSE stream for one or more sessions.
    *
    * The mobile page opens a single connection and passes every visible session
-   * as a repeated `sessionId` parameter. A one-session request keeps the old
-   * untagged payloads; a multi-session request tags every payload with its
-   * `sessionId` so the page can dispatch it to the right pane. This avoids the
-   * per-origin connection limit (and queued EventSources) that left a second
-   * pane stuck on "连接中" on mobile browsers.
+   * as a repeated `sessionId` parameter, with a parallel `parentSessionId`
+   * parameter for subagent children (empty for ordinary sessions). A
+   * one-session request keeps the old untagged payloads; a multi-session
+   * request tags every payload with its `sessionId` so the page can dispatch it
+   * to the right pane. This avoids the per-origin connection limit (and queued
+   * EventSources) that left a second pane stuck on "连接中" on mobile browsers.
    */
   async function handleStream(req, res, url) {
     if (disposed) {
       sendJson(res, 503, { error: 'plugin disposed' })
       return
     }
-    const sessionIds = [...new Set(url.searchParams.getAll('sessionId').filter((value) => value !== ''))]
-    if (sessionIds.length === 0) {
+    const sessionIds = url.searchParams.getAll('sessionId')
+    const parentIds = url.searchParams.getAll('parentSessionId')
+    const entries = []
+    const seen = new Set()
+    for (let index = 0; index < sessionIds.length; index += 1) {
+      const sessionId = sessionIds[index]
+      if (sessionId === '' || seen.has(sessionId)) continue
+      seen.add(sessionId)
+      entries.push({ sessionId, parentSessionId: parentIds[index] ?? '' })
+    }
+    if (entries.length === 0) {
       sendJson(res, 400, { error: 'sessionId is required' })
       return
     }
-    const multi = sessionIds.length > 1
+    const multi = entries.length > 1
     res.writeHead(200, {
       ...SECURITY_HEADERS,
       'content-type': 'text/event-stream; charset=utf-8',
@@ -359,15 +381,18 @@ export function apply(ctx, config) {
         try { res.write(': ping\n\n') } catch { stop() }
       }
     }, 15000)
-    const followSession = async (sessionId) => {
+    const followSession = async (sessionId, parentSessionId) => {
       const controller = new AbortController()
       controllers.set(sessionId, controller)
       const jobAbort = new AbortController()
       jobAborts.set(sessionId, jobAbort)
       const stopJobs = startJobStreaming(sessionId, emit, jobAbort.signal)
+      const address = parentSessionId === ''
+        ? { kind: 'session', sessionId }
+        : { kind: 'subagent', parentSessionId, childSessionId: sessionId, mode: 'unknown' }
       try {
         const frames = ctx.sessionController.follow({
-          address: { kind: 'session', sessionId },
+          address,
           maxMessages: 200,
           assistantStream: true,
         }, controller.signal)
@@ -395,9 +420,9 @@ export function apply(ctx, config) {
       }
     }
     try {
-      await Promise.all(sessionIds.map((sessionId) => followSession(sessionId)))
+      await Promise.all(entries.map(({ sessionId, parentSessionId }) => followSession(sessionId, parentSessionId)))
       if (!closed && !disposed) {
-        for (const sessionId of sessionIds) emit(sessionId, { t: 'end' })
+        for (const { sessionId } of entries) emit(sessionId, { t: 'end' })
       }
     } finally {
       clearInterval(ping)

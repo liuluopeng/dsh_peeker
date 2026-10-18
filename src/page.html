@@ -487,7 +487,7 @@
       closeSharedStream()
       return
     }
-    const key = ids.join('\n')
+    const key = ids.map((id) => `${id}\u0000${panes.get(id)?.parentSessionId ?? ''}`).join('\n')
     if (!force && streamSource !== null && streamKey === key) return
     closeSharedStream()
     streamKey = key
@@ -495,8 +495,12 @@
       if (pane.snapshot !== true) pane.streamState = 'connecting'
       paintPane(pane)
     }
-    const query = ids.map((id) => `sessionId=${encodeURIComponent(id)}`).join('&')
-    const source = new EventSource(`/api/stream?${query}`)
+    const params = new URLSearchParams()
+    for (const id of ids) {
+      params.append('sessionId', id)
+      params.append('parentSessionId', panes.get(id)?.parentSessionId ?? '')
+    }
+    const source = new EventSource(`/api/stream?${params}`)
     streamSource = source
     source.onopen = () => {
       if (streamSource !== source) return
@@ -728,6 +732,7 @@
     panesEl.append(root)
     const pane = {
       id: session.sessionId, title: session.title || session.sessionId, updatedAt: Number(session.updatedAt) || 0,
+      parentSessionId: typeof session.parentSessionId === 'string' ? session.parentSessionId : '',
       running: session.running === true, streamState: streamOpen ? 'open' : 'connecting',
       items: [], live: null, liveNode: null, snapshot: false,
       startedAt: 0, jobs: new Map(), jobsEl, elapsedEl: elapsed,
@@ -771,6 +776,7 @@
         if (session) {
           pane.title = session.title || pane.title
           pane.updatedAt = Number(session.updatedAt) || pane.updatedAt
+          if (typeof session.parentSessionId === 'string') pane.parentSessionId = session.parentSessionId
         }
         if (activeIds.has(pane.id)) {
           if (!pane.running) pane.running = true

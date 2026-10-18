@@ -15,6 +15,15 @@ const sessions = [
     running: true,
     projections: { values: { 'session/title': 'Test task' } },
   },
+  {
+    sessionId: 'session-subagent',
+    parentSessionId: 'session-test',
+    origin: 'subagent',
+    cwd: '/tmp/demo',
+    updatedAt: Date.now() - 1000,
+    running: true,
+    projections: { values: { 'session/title': 'Subagent task' } },
+  },
 ]
 
 const jobStartedAt = Date.now()
@@ -46,6 +55,7 @@ const jobController = {
 }
 
 const listeners = []
+const followAddresses = []
 const ctx = {
   get(name) {
     return name === 'jobController' ? jobController : undefined
@@ -66,7 +76,8 @@ const ctx = {
       return { items: sessions }
     },
     async *follow(request, signal) {
-      const id = request.address.sessionId
+      followAddresses.push(request.address)
+      const id = request.address.kind === 'session' ? request.address.sessionId : request.address.childSessionId
       yield {
         type: 'snapshot',
         records: [
@@ -149,6 +160,7 @@ test('serves the light single-page peek UI', async () => {
   assert.doesNotMatch(body, /overflow: auto/)
   assert.doesNotMatch(body, /pointerdown/)
   assert.match(body, /applyEvent\(pane, record\.event, true\)/)
+  assert.match(body, /parentSessionId/)
   assert.match(body, /font: 15px/)
 })
 
@@ -210,8 +222,12 @@ test('lists sessions and refuses writes', async () => {
   assert.equal(response.status, 200)
   assert.equal(response.headers.get('connection'), 'close')
   const body = await response.json()
+  assert.equal(body.items.length, 2)
   assert.equal(body.items[0].title, 'Test task')
   assert.equal(body.items[0].running, true)
+  const subagent = body.items.find((item) => item.sessionId === 'session-subagent')
+  assert.ok(subagent)
+  assert.equal(subagent.parentSessionId, 'session-test')
 
   const write = await fetch(`${base}/api/sessions`, { method: 'POST' })
   assert.equal(write.status, 405)
@@ -274,6 +290,32 @@ test('multiplexes several sessions over one SSE and tags every frame', async () 
       assert.ok(frame.sessionId === 'session-test' || frame.sessionId === 'session-second')
     }
     assert.ok(frames.filter((frame) => frame.t === 'snapshot').length >= 2)
+  } finally {
+    controller.abort()
+  }
+})
+
+test('follows a subagent with its durable parent address', async () => {
+  followAddresses.length = 0
+  const controller = new AbortController()
+  try {
+    const response = await fetch(`${base}/api/stream?sessionId=session-subagent&parentSessionId=session-test`, { signal: controller.signal })
+    assert.equal(response.status, 200)
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let body = ''
+    for (let reads = 0; reads < 50 && !body.includes('"t":"snapshot"'); reads += 1) {
+      const { value, done } = await reader.read()
+      if (done) break
+      body += decoder.decode(value, { stream: true })
+    }
+    assert.match(body, /hello session-subagent/)
+    assert.deepEqual(followAddresses[0], {
+      kind: 'subagent',
+      parentSessionId: 'session-test',
+      childSessionId: 'session-subagent',
+      mode: 'unknown',
+    })
   } finally {
     controller.abort()
   }

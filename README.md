@@ -4,7 +4,7 @@ A deliberately small, read-only, **light** LAN view of the active DSH sessions.
 
 - No PIN, no path secret, no relay, no account.
 - No input endpoints and no page input: the Host plugin only calls `sessionController.list()` and `sessionController.follow()`; the page disables scrolling, zoom, selection, context menus, drags, and taps.
-- Autodiscovers active (running) sessions every 3 seconds; there is no session picker.
+- Autodiscovers active (running) sessions every 3 seconds; there is no session picker. Subagent children are included and followed with their durable parent address, so their panes show the child transcript instead of failing to connect.
 - Auto-expands assistant reasoning as it streams.
 - Every pane shows only its newest page and stays pinned to its tail. The transcript, job band, and tool output are paged programmatically; the reader cannot scroll them and no scrollbar is rendered.
 - Streams live background-job output (running commands) from the Host's `jobController`, with a spinner and elapsed time; running tool calls show the same indicator.

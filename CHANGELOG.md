@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.6 — 2026-10-18
+
+- Follow subagent sessions with their durable parent address instead of a plain session address. The session list now exposes `parentSessionId`, the page passes it alongside each subagent `sessionId`, and the server follows `{ kind: 'subagent', parentSessionId, childSessionId, mode: 'unknown' }`. This fixes the pane that showed the subagent's approval/transcript text and then stayed on `连接中` because the Host rejected `{ kind: 'session' }` for a subagent child.
+
 ## 0.5.5 — 2026-10-18
 
 - Fix a snapshot regression: replaying a session's history no longer destroys a pane when the history contains an older `turn/end`. Only a live `turn/end` removes the pane; historical turn boundaries are ignored during snapshot rendering.
