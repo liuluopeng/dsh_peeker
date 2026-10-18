@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="data:,">
+<title>LX DSH Peek</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f3f5f8;
+    --panel: #ffffff;
+    --line: #dbe3ec;
+    --text: #17212b;
+    --muted: #64748b;
+    --accent: #0b6bcb;
+    --user: #eaf3ff;
+    --tool: #f7f9fc;
+    --ok: #168a4f;
+    --err: #b91c1c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
+  body {
+    display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  }
+  header {
+    flex: 0 0 auto;
+    padding: calc(8px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 8px calc(12px + env(safe-area-inset-left));
+    background: rgba(255, 255, 255, .95); border-bottom: 1px solid var(--line);
+  }
+  .bar { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .brand { font-weight: 700; letter-spacing: .02em; white-space: nowrap; }
+  .brand span { color: var(--accent); }
+  .dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }
+  .dot.busy { background: var(--ok); box-shadow: 0 0 0 3px rgba(22, 138, 79, .14); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: .45; } }
+  .status { min-width: 0; overflow: hidden; color: var(--muted); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
+  main {
+    flex: 1 1 auto; min-height: 0; display: grid; gap: 8px;
+    padding: 8px calc(8px + env(safe-area-inset-right)) 8px calc(8px + env(safe-area-inset-left));
+    overflow: hidden;
+  }
+  main[data-count="0"] { grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
+  main[data-count="1"] { grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
+  main[data-count="2"] { grid-template: repeat(2, minmax(0, 1fr)) / minmax(0, 1fr); }
+  main[data-count="3"] { grid-template: repeat(3, minmax(0, 1fr)) / minmax(0, 1fr); }
+  main[data-count="4"] { grid-template: repeat(2, minmax(0, 1fr)) / repeat(2, minmax(0, 1fr)); }
+  /* Landscape: 2 and 3 panes sit side by side; portrait stacks them. */
+  @media (orientation: landscape) {
+    main[data-count="2"] { grid-template: minmax(0, 1fr) / repeat(2, minmax(0, 1fr)); }
+    main[data-count="3"] { grid-template: minmax(0, 1fr) / repeat(3, minmax(0, 1fr)); }
+  }
+  .empty {
+    grid-column: 1 / -1; grid-row: 1 / -1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 6px; padding: 24px; text-align: center;
+    color: var(--muted); background: var(--panel); border: 1px dashed var(--line); border-radius: 10px;
+  }
+  .empty strong { color: var(--text); font-size: 14px; font-weight: 600; }
+  .empty span { font-size: 12px; }
+  .pane {
+    display: flex; flex-direction: column; min-width: 0; min-height: 0;
+    overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, .04);
+  }
+  .pane-head {
+    flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 7px 10px; border-bottom: 1px solid var(--line); background: #f8fafc;
+  }
+  .pane-title {
+    min-width: 0; overflow: hidden; font-size: 12px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis;
+  }
+  .pane-meta { flex: 0 0 auto; display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+  .pane-meta .dot { width: 6px; height: 6px; }
+  .pane-body {
+    flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain;
+    display: flex; flex-direction: column; gap: 7px; padding: 8px;
+  }
+  .pane-empty { margin: auto; color: var(--muted); font-size: 12px; text-align: center; padding: 12px; }
+  .item { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; background: var(--panel); overflow-wrap: anywhere; }
+  .item.user { background: var(--user); border-color: #cfe3fb; }
+  .item.tool { background: var(--tool); }
+  .item.error { border-color: #f0b4b4; }
+  .item.error .who { color: var(--err); }
+  .who { display: flex; justify-content: space-between; gap: 6px; margin-bottom: 3px; color: var(--muted); font-size: 10px; letter-spacing: .03em; text-transform: uppercase; }
+  .body { white-space: pre-wrap; word-break: break-word; }
+  .reasoning { margin-top: 5px; padding-left: 7px; border-left: 2px solid #cbd5e1; color: #475569; font-size: 12px; white-space: pre-wrap; }
+  details { margin-top: 5px; }
+  summary { cursor: pointer; color: var(--accent); font-size: 11px; }
+  pre {
+    margin: 5px 0 0; max-height: 32vh; overflow: auto; padding: 6px 7px; border-radius: 6px;
+    background: #f1f5f9; color: #334155; white-space: pre-wrap; word-break: break-word;
+    font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .cursor { color: var(--accent); animation: blink 1s steps(2, start) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  footer {
+    flex: 0 0 auto; display: flex; justify-content: space-between; gap: 8px;
+    padding: 5px calc(12px + env(safe-area-inset-right)) calc(5px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
+    background: rgba(255, 255, 255, .95); border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 10px;
+  }
+  #flash { position: fixed; inset: 0; z-index: 9999; background: #ffe066; opacity: 0; pointer-events: none; }
+  #toast {
+    position: fixed; left: 50%; bottom: calc(38px + env(safe-area-inset-bottom)); z-index: 10000;
+    transform: translateX(-50%) translateY(20px); opacity: 0; pointer-events: none;
+    padding: 7px 14px; border: 1px solid #86d3a4; border-radius: 999px;
+    background: #e8f7ee; color: #166534; font-size: 13px; transition: .2s;
+  }
+  #toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+  @media (prefers-reduced-motion: reduce) { .dot.busy, .cursor { animation: none; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="brand">LX <span>DSH</span> Peek</div>
+    <div id="dot" class="dot"></div>
+    <div id="status" class="status">等待活跃任务…</div>
+  </div>
+</header>
+<main id="panes" data-count="0"></main>
+<footer><span>只读 · 无输入 · 局域网可见</span><span id="meta">活跃 0 · 显示 0</span><span id="orientation">竖屏</span><span id="clock"></span></footer>
+<div id="flash"></div>
+<div id="toast"></div>
+<script>
+(() => {
+  const MAX_PANES = 4
+  const KEEP_COMPLETED_MS = 20000
+  const POLL_MS = 3000
+  const panesEl = document.getElementById('panes')
+  const dotEl = document.getElementById('dot')
+  const statusEl = document.getElementById('status')
+  const metaEl = document.getElementById('meta')
+  const clockEl = document.getElementById('clock')
+  const flashEl = document.getElementById('flash')
+  const toastEl = document.getElementById('toast')
+  const panes = new Map()
+  let syncing = false
+  let toastTimer = 0
+
+  const el = (tag, className, text) => {
+    const node = document.createElement(tag)
+    if (className) node.className = className
+    if (text !== undefined) node.textContent = text
+    return node
+  }
+
+  const cut = (value, max = 3000) => {
+    const text = typeof value === 'string' ? value : (() => {
+      try { return JSON.stringify(value, null, 2) } catch { return String(value) }
+    })()
+    return text.length > max ? `${text.slice(0, max)}\n…（已截断）` : text
+  }
+
+  const timeOf = (ms) => {
+    const value = Number(ms)
+    if (!Number.isFinite(value) || value <= 0) return ''
+    return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  }
+
+  const textOf = (blocks) => (Array.isArray(blocks) ? blocks : [])
+    .filter((block) => block && block.type === 'text')
+    .map((block) => block.text || '')
+    .join('\n')
+    .trim()
+
+  const splitAssistant = (blocks) => {
+    const text = []
+    const reasoning = []
+    for (const block of Array.isArray(blocks) ? blocks : []) {
+      if (block && block.type === 'text') text.push(block.text || '')
+      else if (block && block.type === 'reasoning') reasoning.push(block.text || '')
+    }
+    return { text: text.join('\n').trim(), reasoning: reasoning.join('\n').trim() }
+  }
+
+  function setStatus(text, busy) {
+    statusEl.textContent = text
+    dotEl.classList.toggle('busy', busy === true)
+  }
+
+  function setMeta(active, shown) {
+    metaEl.textContent = `活跃 ${active} · 显示 ${shown}`
+  }
+
+  function nearBottom(pane) {
+    return pane.body.scrollHeight - pane.body.scrollTop - pane.body.clientHeight < 120
+  }
+
+  function scrollPane(pane, force) {
+    if (force || nearBottom(pane)) pane.body.scrollTop = pane.body.scrollHeight
+  }
+
+  function showEmpty() {
+    if (panesEl.querySelector('.empty') !== null) return
+    const box = el('div', 'empty')
+    box.append(el('strong', '', '当前没有活跃任务'))
+    box.append(el('span', '', '在 DSH 里开始一个任务，这里会自动出现'))
+    panesEl.append(box)
+  }
+
+  function removeEmpty() {
+    const box = panesEl.querySelector('.empty')
+    if (box !== null) box.remove()
+  }
+
+  function updateLayout() {
+    panesEl.dataset.count = String(panes.size)
+    if (panes.size === 0) showEmpty()
+    else removeEmpty()
+  }
+
+  function paintPane(pane) {
+    pane.titleEl.textContent = pane.title || pane.id
+    pane.dotEl.className = `dot${pane.running ? ' busy' : ''}`
+    if (pane.running) {
+      pane.statusEl.textContent = pane.streamState === 'open'
+        ? '运行中'
+        : pane.streamState === 'error' ? '重连中…' : '连接中…'
+    } else {
+      pane.statusEl.textContent = pane.completedAt > 0 ? '已完成' : pane.streamState === 'ended' ? '流已结束' : '空闲'
+    }
+  }
+
+  function nodeFor(pane, item) {
+    const article = el('article', `item ${item.kind}${item.error ? ' error' : ''}`)
+    const who = el('div', 'who')
+    const label = item.kind === 'user' ? '你'
+      : item.kind === 'tool' ? `工具 · ${item.name || 'tool'}`
+        : item.kind === 'note' ? '系统' : 'DSH'
+    who.append(el('span', '', label))
+    who.append(el('span', '', timeOf(item.time)))
+    article.append(who)
+    if (item.kind === 'tool') {
+      article.append(el('div', 'body', item.args || ''))
+      if (item.result !== null && item.result !== undefined) {
+        const details = el('details')
+        details.open = item.error === true
+        details.append(el('summary', '', item.error ? '错误输出' : '输出'))
+        details.append(el('pre', '', cut(item.result)))
+        article.append(details)
+      }
+      return article
+    }
+    const body = el('div', 'body', item.text || '')
+    if (item.live === true) body.append(el('span', 'cursor', ' ▍'))
+    article.append(body)
+    if (item.reasoning) {
+      const details = el('details')
+      details.append(el('summary', '', '思考'))
+      details.append(el('div', 'reasoning', cut(item.reasoning, 6000)))
+      article.append(details)
+    }
+    return article
+  }
+
+  function renderPane(pane, forceScroll) {
+    pane.body.textContent = ''
+    pane.liveNode = null
+    if (pane.items.length === 0) {
+      pane.body.append(el('div', 'pane-empty', pane.snapshot ? '暂无输出' : '等待输出…'))
+      return
+    }
+    for (const item of pane.items) {
+      const node = nodeFor(pane, item)
+      pane.body.append(node)
+      if (item === pane.live) pane.liveNode = node
+    }
+    scrollPane(pane, forceScroll === true)
+  }
+
+  function renderLive(pane) {
+    if (pane.live === null) return
+    if (pane.liveNode === null) {
+      renderPane(pane, false)
+      return
+    }
+    const body = pane.liveNode.querySelector('.body')
+    if (body === null) return
+    body.textContent = pane.live.text || ''
+    body.append(el('span', 'cursor', ' ▍'))
+    const reasoning = pane.liveNode.querySelector('.reasoning')
+    if (reasoning !== null) reasoning.textContent = pane.live.reasoning || ''
+    scrollPane(pane, false)
+  }
+
+  function ensureLive(pane) {
+    if (pane.live !== null) return pane.live
+    pane.live = { kind: 'assistant', text: '', reasoning: '', live: true, streamed: true, time: Date.now() }
+    pane.items.push(pane.live)
+    return pane.live
+  }
+
+  function applyEvent(pane, event) {
+    const data = event && event.data ? event.data : {}
+    switch (event && event.type) {
+      case 'user/message':
+        pane.live = null
+        pane.items.push({ kind: 'user', text: textOf(data.content), time: event.time })
+        break
+      case 'assistant/message': {
+        const { text, reasoning } = splitAssistant(data.message && data.message.content)
+        const last = pane.items[pane.items.length - 1]
+        if (last && last.kind === 'assistant' && (last.streamed === true || last.live === true)) {
+          last.text = text
+          last.reasoning = reasoning
+          last.live = false
+          last.streamed = false
+        } else {
+          pane.items.push({ kind: 'assistant', text, reasoning, time: event.time })
+        }
+        pane.live = null
+        break
+      }
+      case 'tool/call':
+        pane.live = null
+        pane.items.push({
+          kind: 'tool', name: data.name || 'tool', callId: data.callId,
+          args: cut(data.arguments === undefined ? '' : data.arguments, 1000),
+          result: null, error: false, time: event.time,
+        })
+        break
+      case 'tool/result': {
+        const block = (data.message && data.message.content && data.message.content[0]) || {}
+        const parts = []
+        for (const inner of Array.isArray(block.content) ? block.content : []) {
+          if (inner && inner.type === 'text') parts.push(inner.text || '')
+          else if (inner && inner.type === 'file' && inner.attachment) parts.push(`附件：${inner.attachment.name || '文件'}`)
+        }
+        const result = parts.join('\n').trim()
+        let target = null
+        for (let index = pane.items.length - 1; index >= 0; index -= 1) {
+          const item = pane.items[index]
+          if (item.kind === 'tool' && item.callId === block.toolCallId) { target = item; break }
+        }
+        if (target) {
+          target.result = result === '' ? '（无输出）' : result
+          target.error = Boolean(data.error) || block.isError === true
+        } else {
+          pane.items.push({ kind: 'note', text: `工具结果：${cut(result || '（空）', 1000)}`, time: event.time })
+        }
+        break
+      }
+      case 'turn/start':
+        pane.running = true
+        pane.completedAt = 0
+        paintPane(pane)
+        break
+      case 'turn/end':
+        pane.running = false
+        pane.completedAt = Date.now()
+        paintPane(pane)
+        break
+      default:
+        break
+    }
+  }
+
+  function applyDelta(pane, frame) {
+    if (!frame) return
+    if (frame.type === 'start') {
+      ensureLive(pane)
+      renderPane(pane, false)
+      return
+    }
+    if (frame.type === 'end') {
+      if (pane.live !== null) {
+        pane.live.live = false
+        pane.live = null
+        renderLive(pane)
+      }
+      return
+    }
+    if (frame.type !== 'chunk' || !frame.chunk) return
+    const chunk = frame.chunk
+    if (chunk.type === 'text-delta') {
+      ensureLive(pane).text += chunk.text || ''
+      renderLive(pane)
+    } else if (chunk.type === 'reasoning-delta') {
+      ensureLive(pane).reasoning += chunk.text || ''
+      renderLive(pane)
+    }
+  }
+
+  function flashScreen(times) {
+    const count = Math.max(1, Math.min(6, Number(times) || 3))
+    if (typeof flashEl.getAnimations === 'function') flashEl.getAnimations().forEach((animation) => animation.cancel())
+    flashEl.animate(
+      [{ opacity: 0 }, { opacity: 0.9 }, { opacity: 0 }],
+      { duration: 260, iterations: count, easing: 'ease-in-out' },
+    )
+    toastEl.textContent = '任务结束 ✓'
+    toastEl.classList.add('on')
+    clearTimeout(toastTimer)
+    toastTimer = setTimeout(() => toastEl.classList.remove('on'), 2200)
+    if (navigator.vibrate && navigator.userActivation?.hasBeenActive) navigator.vibrate([120, 80, 120, 80, 120])
+  }
+
+  function closePaneStream(pane) {
+    if (pane.source !== null) {
+      pane.source.close()
+      pane.source = null
+    }
+  }
+
+  function openPaneStream(pane) {
+    closePaneStream(pane)
+    pane.streamState = 'connecting'
+    paintPane(pane)
+    const source = new EventSource(`/api/stream?sessionId=${encodeURIComponent(pane.id)}`)
+    pane.source = source
+    source.onopen = () => {
+      if (pane.source !== source) return
+      pane.streamState = 'open'
+      paintPane(pane)
+    }
+    source.onerror = () => {
+      if (pane.source !== source) return
+      pane.streamState = 'error'
+      paintPane(pane)
+    }
+    source.onmessage = (message) => {
+      if (pane.source !== source) return
+      try {
+        handlePane(pane, JSON.parse(message.data))
+      } catch { /* ignore a malformed frame */ }
+    }
+  }
+
+  function handlePane(pane, payload) {
+    if (!payload || typeof payload !== 'object') return
+    if (payload.t === 'snapshot') {
+      pane.items = []
+      pane.live = null
+      pane.snapshot = true
+      if (payload.dropped > 0) {
+        pane.items.push({ kind: 'note', text: `已省略最早的 ${payload.dropped} 条事件，下面只显示最近的内容`, time: Date.now() })
+      }
+      for (const record of Array.isArray(payload.records) ? payload.records : []) {
+        if (record && record.type === 'event' && record.event) applyEvent(pane, record.event)
+      }
+      pane.streamState = 'open'
+      paintPane(pane)
+      renderPane(pane, true)
+      return
+    }
+    if (payload.t === 'event') {
+      applyEvent(pane, payload.event)
+      renderPane(pane, false)
+      return
+    }
+    if (payload.t === 'delta') {
+      applyDelta(pane, payload.frame)
+      return
+    }
+    if (payload.t === 'flash') {
+      flashScreen(payload.times)
+      return
+    }
+    if (payload.t === 'end') {
+      pane.streamState = 'ended'
+      closePaneStream(pane)
+      paintPane(pane)
+      return
+    }
+    if (payload.t === 'error') {
+      pane.streamState = 'error'
+      paintPane(pane)
+    }
+  }
+
+  function createPane(session) {
+    const root = el('section', 'pane')
+    root.dataset.session = session.sessionId
+    const head = el('div', 'pane-head')
+    const title = el('div', 'pane-title', session.title || session.sessionId)
+    const meta = el('div', 'pane-meta')
+    const dot = el('span', 'dot')
+    const status = el('span', 'pane-status', '连接中…')
+    meta.append(dot, status)
+    head.append(title, meta)
+    const body = el('div', 'pane-body')
+    root.append(head, body)
+    panesEl.append(root)
+    const pane = {
+      id: session.sessionId, title: session.title || session.sessionId, updatedAt: Number(session.updatedAt) || 0,
+      running: session.running === true, completedAt: 0, streamState: 'connecting',
+      items: [], live: null, liveNode: null, snapshot: false, source: null,
+      root, titleEl: title, dotEl: dot, statusEl: status, body,
+    }
+    panes.set(pane.id, pane)
+    paintPane(pane)
+    openPaneStream(pane)
+    updateLayout()
+    return pane
+  }
+
+  function removePane(pane) {
+    closePaneStream(pane)
+    pane.root.remove()
+    panes.delete(pane.id)
+    updateLayout()
+  }
+
+  async function sync() {
+    if (syncing) return
+    syncing = true
+    try {
+      const response = await fetch('/api/sessions', { cache: 'no-store' })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body && body.error ? body.error : '无法读取会话')
+      const sessions = Array.isArray(body.items) ? body.items : []
+      const active = sessions
+        .filter((session) => session.running === true)
+        .sort((left, right) => (Number(right.updatedAt) || 0) - (Number(left.updatedAt) || 0))
+      const activeIds = new Set(active.map((session) => session.sessionId))
+
+      for (const pane of panes.values()) {
+        const session = sessions.find((candidate) => candidate.sessionId === pane.id)
+        if (session) {
+          pane.title = session.title || pane.title
+          pane.updatedAt = Number(session.updatedAt) || pane.updatedAt
+        }
+        if (activeIds.has(pane.id)) {
+          if (!pane.running) {
+            pane.running = true
+            pane.completedAt = 0
+          }
+          if (pane.streamState === 'ended') openPaneStream(pane)
+        } else if (pane.running) {
+          pane.running = false
+          pane.completedAt = Date.now()
+        }
+        paintPane(pane)
+      }
+
+      for (const session of active) {
+        if (panes.size >= MAX_PANES) break
+        if (!panes.has(session.sessionId)) createPane(session)
+      }
+
+      for (const pane of [...panes.values()]) {
+        if (pane.completedAt > 0 && Date.now() - pane.completedAt > KEEP_COMPLETED_MS) removePane(pane)
+      }
+      for (const pane of [...panes.values()]) {
+        if (panes.size <= MAX_PANES) break
+        if (!activeIds.has(pane.id)) removePane(pane)
+      }
+
+      updateLayout()
+      const shown = panes.size
+      const extra = active.length > MAX_PANES ? ' · 显示前 4 个' : ''
+      setStatus(active.length === 0 ? '等待活跃任务…' : `${active.length} 个活跃任务${extra}`, active.length > 0)
+      setMeta(active.length, shown)
+    } catch (error) {
+      setStatus('读取活跃任务失败，重试中…', false)
+      console.error(error)
+    } finally {
+      syncing = false
+    }
+  }
+
+  const orientationEl = document.getElementById('orientation')
+  const landscape = window.matchMedia('(orientation: landscape)')
+  const paintOrientation = () => {
+    const value = landscape.matches ? 'landscape' : 'portrait'
+    document.documentElement.dataset.orientation = value
+    orientationEl.textContent = value === 'landscape' ? '横屏' : '竖屏'
+  }
+  if (typeof landscape.addEventListener === 'function') landscape.addEventListener('change', paintOrientation)
+  window.addEventListener('resize', paintOrientation)
+  paintOrientation()
+
+  clockEl.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  setInterval(() => {
+    clockEl.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  }, 1000)
+  setInterval(() => { void sync() }, POLL_MS)
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void sync() })
+
+  let wakeLock = null
+  const keepAwake = async () => {
+    try {
+      if (navigator.wakeLock && document.visibilityState === 'visible') {
+        wakeLock = await navigator.wakeLock.request('screen')
+      }
+    } catch { /* unsupported or refused */ }
+  }
+  document.addEventListener('pointerdown', keepAwake, { once: true })
+
+  void sync()
+})()
+</script>
+</body>
+</html>

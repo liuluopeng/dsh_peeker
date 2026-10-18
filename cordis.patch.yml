@@ -1,0 +1,7 @@
+# lx_dsh_peek bundle patch: host-only, serves its own LAN page.
+# The row name must match package.json's name so the Loader resolves the package.
+- insert:
+    - id: lx-dsh-peek
+      name: lx_dsh_peek
+      config:
+        port: 3082
