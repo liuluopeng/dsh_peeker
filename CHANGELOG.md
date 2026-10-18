@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.2 — 2026-10-18
+
+- Keep every pane pinned to its newest line. The page now follows new reasoning, tool output, and transcript rows unconditionally instead of waiting until the reader is within 120px of the bottom; it also re-pins after grid/job-band changes and once per second.
+
 ## 0.5.1 — 2026-10-18
 
 - Multiplex every active pane over one SSE connection. The server tags each session's transcript and job frames with `sessionId`; the page routes them and reconnects only when the visible pane set changes. This fixes a second pane staying on `连接中` when a mobile browser queued its extra EventSource.

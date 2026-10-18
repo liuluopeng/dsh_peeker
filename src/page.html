@@ -225,12 +225,12 @@
     metaEl.textContent = `活跃 ${active} · 显示 ${shown}`
   }
 
-  function nearBottom(pane) {
-    return pane.body.scrollHeight - pane.body.scrollTop - pane.body.clientHeight < 120
-  }
-
-  function scrollPane(pane, force) {
-    if (force || nearBottom(pane)) pane.body.scrollTop = pane.body.scrollHeight
+  // Every pane follows its own tail unconditionally: the phone is a live
+  // monitor, so a new reasoning line, tool row, or transcript item must land in
+  // view even if the reader had scrolled up. There is no "near bottom" grace
+  // period to leave a pane frozen on an older line.
+  function scrollPane(pane) {
+    pane.body.scrollTop = pane.body.scrollHeight
   }
 
   function showEmpty() {
@@ -250,6 +250,8 @@
     panesEl.dataset.count = String(panes.size)
     if (panes.size === 0) showEmpty()
     else removeEmpty()
+    // A grid change resizes every pane; keep each one's tail in view.
+    for (const pane of panes.values()) scrollPane(pane)
   }
 
   function paintPane(pane) {
@@ -314,7 +316,7 @@
     return article
   }
 
-  function renderPane(pane, forceScroll) {
+  function renderPane(pane) {
     pane.body.textContent = ''
     pane.liveNode = null
     if (pane.items.length === 0) {
@@ -326,13 +328,13 @@
       pane.body.append(node)
       if (item === pane.live) pane.liveNode = node
     }
-    scrollPane(pane, forceScroll === true)
+    scrollPane(pane)
   }
 
   function renderLive(pane) {
     if (pane.live === null) return
     if (pane.liveNode === null) {
-      renderPane(pane, false)
+      renderPane(pane)
       return
     }
     const body = pane.liveNode.querySelector('.body')
@@ -345,7 +347,7 @@
       if (text !== null) text.textContent = pane.live.reasoning || ''
       reasoning.hidden = !pane.live.reasoning
     }
-    scrollPane(pane, false)
+    scrollPane(pane)
   }
 
   function ensureLive(pane) {
@@ -427,7 +429,7 @@
     if (!frame) return
     if (frame.type === 'start') {
       ensureLive(pane)
-      renderPane(pane, false)
+      renderPane(pane)
       return
     }
     if (frame.type === 'end') {
@@ -605,6 +607,7 @@
     pane.jobsEl.textContent = ''
     if (list.length === 0) {
       pane.jobsEl.hidden = true
+      scrollPane(pane)
       return
     }
     pane.jobsEl.hidden = false
@@ -633,6 +636,8 @@
       pre.scrollTop = pre.scrollHeight
     }
     if (list.length > 3) pane.jobsEl.append(el('div', 'job-more', `还有 ${list.length - 3} 个命令`))
+    // The jobs band can grow or shrink; keep the transcript tail visible.
+    scrollPane(pane)
   }
 
   function handlePane(pane, payload) {
@@ -649,12 +654,12 @@
       }
       pane.streamState = 'open'
       paintPane(pane)
-      renderPane(pane, true)
+      renderPane(pane)
       return
     }
     if (payload.t === 'event') {
       applyEvent(pane, payload.event)
-      renderPane(pane, false)
+      renderPane(pane)
       return
     }
     if (payload.t === 'delta') {
@@ -833,6 +838,9 @@
         }
       }
       if (changed) renderJobs(pane)
+      // Re-pin every second as well: job bands, font metric changes, or a late
+      // image load can move the tail without a transcript event.
+      scrollPane(pane)
     }
     clockEl.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   }

@@ -6,6 +6,7 @@ A deliberately small, read-only, **light** LAN view of the active DSH sessions.
 - No input endpoints: the Host plugin only calls `sessionController.list()` and `sessionController.follow()`.
 - Autodiscovers active (running) sessions every 3 seconds; there is no session picker.
 - Auto-expands assistant reasoning as it streams.
+- Every pane stays pinned to its newest line: new reasoning, tool rows, and transcript items land in view without waiting for the reader to be near the bottom.
 - Streams live background-job output (running commands) from the Host's `jobController`, with a spinner and elapsed time; running tool calls show the same indicator.
 - All visible panes share one SSE connection; every frame carries its `sessionId`. This avoids the mobile per-origin connection limit that left a second pane stuck on `连接中`.
 - The peek page's default text size is 15px; the pane header shows a moving activity bar and elapsed time while a turn runs.

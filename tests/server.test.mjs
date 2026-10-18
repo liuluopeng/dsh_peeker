@@ -137,6 +137,8 @@ test('serves the light single-page peek UI', async () => {
   assert.match(body, /job-output/)
   assert.match(body, /openSharedStream/)
   assert.match(body, /dispatchFrame/)
+  assert.doesNotMatch(body, /nearBottom/)
+  assert.match(body, /pane\.body\.scrollTop = pane\.body\.scrollHeight/)
   assert.match(body, /font: 15px/)
 })
 
