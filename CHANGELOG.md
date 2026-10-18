@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.4 — 2026-10-18
+
+- Make the phone page strictly view-only: `pointer-events: none`, `touch-action: none`, no text selection or callout, zoom disabled, and captured listeners that swallow context menu, selection, drag, wheel, touchmove, and click. All scrollbars are hidden.
+- Pane bodies, the job band, tool output, and job output use `overflow: hidden` and are driven to their newest page programmatically. Tool results render as static text instead of a collapsible `<details>` tap target.
+- Remove the pointerdown Wake Lock gesture; request the lock on load and whenever the page becomes visible instead.
+
 ## 0.5.3 — 2026-10-18
 
 - Remove the `任务结束` toast. Completion feedback is now only the transient full-screen flash (and vibration where allowed).

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="color-scheme" content="light">
 <link rel="icon" href="data:,">
 <title>LX DSH Peek</title>
@@ -21,7 +21,17 @@
     --err: #b91c1c;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
+  html, body {
+    margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    /* This page is a view-only monitor: no gesture scrolling, pinch zoom,
+       pull-to-refresh, text selection, or pointer interaction. */
+    overflow: hidden; overscroll-behavior: none; touch-action: none;
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+    pointer-events: none;
+  }
+  html, body, * { scrollbar-width: none; -ms-overflow-style: none; }
+  *::-webkit-scrollbar { display: none; width: 0; height: 0; }
+  ::selection { background: transparent; }
   body {
     display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
     font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
@@ -77,7 +87,7 @@
   .pane-meta .dot { width: 6px; height: 6px; }
   .pane-meta .elapsed::before { content: ' · '; }
   .pane-body {
-    flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain;
+    flex: 1 1 auto; min-height: 0; overflow: hidden;
     display: flex; flex-direction: column; gap: 8px; padding: 9px;
     font-size: 15px;
   }
@@ -93,10 +103,9 @@
   .reasoning { margin-top: 6px; padding-left: 8px; border-left: 2px solid #cbd5e1; color: #475569; font-size: 14px; white-space: pre-wrap; }
   .reasoning[hidden] { display: none; }
   .reasoning-label { margin-bottom: 2px; color: var(--muted); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
-  details { margin-top: 5px; }
-  summary { cursor: pointer; color: var(--accent); font-size: 11px; }
+  .tool-output-label { margin-top: 5px; color: var(--muted); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
   pre {
-    margin: 5px 0 0; max-height: 32vh; overflow: auto; padding: 6px 7px; border-radius: 6px;
+    margin: 5px 0 0; max-height: 32vh; overflow: hidden; padding: 6px 7px; border-radius: 6px;
     background: #f1f5f9; color: #334155; white-space: pre-wrap; word-break: break-word;
     font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   }
@@ -123,7 +132,7 @@
   .tool-state { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); text-transform: none; }
   .jobs {
     flex: 0 0 auto; display: flex; flex-direction: column; gap: 5px;
-    max-height: 38%; overflow: auto; padding: 6px 8px;
+    max-height: 38%; overflow: hidden; padding: 6px 8px;
     border-bottom: 1px solid var(--line); background: #f8fafc;
   }
   .job { border: 1px solid var(--line); border-radius: 7px; background: var(--panel); padding: 5px 7px; }
@@ -133,7 +142,7 @@
   .job-progress { margin-top: 2px; color: var(--accent); font-size: 11px; }
   .job-more { color: var(--muted); font-size: 11px; padding: 1px 4px; }
   .job-output {
-    margin: 4px 0 0; max-height: 110px; overflow: auto; padding: 5px 6px; border-radius: 5px;
+    margin: 4px 0 0; max-height: 110px; overflow: hidden; padding: 5px 6px; border-radius: 5px;
     background: #f1f5f9; color: #334155; white-space: pre-wrap; word-break: break-word;
     font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   }
@@ -223,6 +232,8 @@
   // period to leave a pane frozen on an older line.
   function scrollPane(pane) {
     pane.body.scrollTop = pane.body.scrollHeight
+    pane.jobsEl.scrollTop = pane.jobsEl.scrollHeight
+    for (const pre of pane.root.querySelectorAll('pre')) pre.scrollTop = pre.scrollHeight
   }
 
   function showEmpty() {
@@ -287,11 +298,8 @@
     if (item.kind === 'tool') {
       article.append(el('div', 'body', item.args || ''))
       if (item.result !== null && item.result !== undefined) {
-        const details = el('details')
-        details.open = item.error === true
-        details.append(el('summary', '', item.error ? '错误输出' : '输出'))
-        details.append(el('pre', '', cut(item.result)))
-        article.append(details)
+        article.append(el('div', 'tool-output-label', item.error ? '错误输出' : '输出'))
+        article.append(el('pre', '', cut(item.result)))
       }
       return article
     }
@@ -840,7 +848,16 @@
   tick()
   setInterval(tick, 1000)
   setInterval(() => { void sync() }, POLL_MS)
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void sync() })
+
+  // The phone is a passive monitor: swallow every gesture/menu/selection path
+  // that could otherwise scroll, zoom, copy, or activate something.
+  const blockInput = (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+  }
+  for (const type of ['contextmenu', 'selectstart', 'dragstart', 'wheel', 'touchmove', 'click']) {
+    document.addEventListener(type, blockInput, { capture: true, passive: false })
+  }
 
   let wakeLock = null
   const keepAwake = async () => {
@@ -850,7 +867,15 @@
       }
     } catch { /* unsupported or refused */ }
   }
-  document.addEventListener('pointerdown', keepAwake, { once: true })
+  // Wake Lock normally asks for a user gesture; the page deliberately has none,
+  // so try immediately and again whenever the tab becomes visible.
+  void keepAwake()
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      void sync()
+      void keepAwake()
+    }
+  })
 
   void sync()
 })()

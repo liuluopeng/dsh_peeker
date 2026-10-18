@@ -142,6 +142,12 @@ test('serves the light single-page peek UI', async () => {
   assert.doesNotMatch(body, /任务结束/)
   assert.doesNotMatch(body, /id="toast"/)
   assert.doesNotMatch(body, /KEEP_COMPLETED_MS/)
+  assert.match(body, /touch-action: none/)
+  assert.match(body, /pointer-events: none/)
+  assert.match(body, /scrollbar-width: none/)
+  assert.doesNotMatch(body, /<details/)
+  assert.doesNotMatch(body, /overflow: auto/)
+  assert.doesNotMatch(body, /pointerdown/)
   assert.match(body, /font: 15px/)
 })
 

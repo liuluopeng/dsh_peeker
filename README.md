@@ -3,10 +3,10 @@
 A deliberately small, read-only, **light** LAN view of the active DSH sessions.
 
 - No PIN, no path secret, no relay, no account.
-- No input endpoints: the Host plugin only calls `sessionController.list()` and `sessionController.follow()`.
+- No input endpoints and no page input: the Host plugin only calls `sessionController.list()` and `sessionController.follow()`; the page disables scrolling, zoom, selection, context menus, drags, and taps.
 - Autodiscovers active (running) sessions every 3 seconds; there is no session picker.
 - Auto-expands assistant reasoning as it streams.
-- Every pane stays pinned to its newest line: new reasoning, tool rows, and transcript items land in view without waiting for the reader to be near the bottom.
+- Every pane shows only its newest page and stays pinned to its tail. The transcript, job band, and tool output are paged programmatically; the reader cannot scroll them and no scrollbar is rendered.
 - Streams live background-job output (running commands) from the Host's `jobController`, with a spinner and elapsed time; running tool calls show the same indicator.
 - All visible panes share one SSE connection; every frame carries its `sessionId`. This avoids the mobile per-origin connection limit that left a second pane stuck on `连接中`.
 - The peek page's default text size is 15px; the pane header shows a moving activity bar and elapsed time while a turn runs.
@@ -149,7 +149,7 @@ No runtime dependencies; the plugin uses only Node built-ins.
 node --test tests/server.test.mjs
 ```
 
-The test boots the plugin with a mock `sessionController` and `jobController`, checks the page, session listing, the SSE snapshot/delta/job-output/flash stream, multiplexing two sessions over one tagged stream, the read-only response, the injected official-UI font and conversation-width styles, and invalid-width rejection. The page uses CSS `@media (orientation: landscape)` for layout and `matchMedia` for the footer's `竖屏`/`横屏` label.
+The test boots the plugin with a mock `sessionController` and `jobController`, checks the page (including its no-input, hidden-scrollbar, tail-only markers), session listing, the SSE snapshot/delta/job-output/flash stream, multiplexing two sessions over one tagged stream, the read-only response, the injected official-UI font and conversation-width styles, and invalid-width rejection. The page uses CSS `@media (orientation: landscape)` for layout and `matchMedia` for the footer's `竖屏`/`横屏` label.
 
 ### Layout
 
