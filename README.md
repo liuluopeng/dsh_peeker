@@ -21,6 +21,25 @@ A deliberately small, read-only, **light** LAN view of the active DSH sessions.
 
 This repository is a DSH **bundle**: `package.json` declares `dsh.bundle.patch`, and `cordis.patch.yml` inserts the host row.
 
+### From GitHub
+
+Fully quit `DeepSeek Harness.app` first. If this checkout was previously linked into the desktop profile, replace it:
+
+```sh
+dsh plugin --profile desktop remove lx_dsh_peek
+dsh plugin --profile desktop add github:liuluopeng/dsh_peeker
+```
+
+A clean profile only needs the second command. For a reproducible install, append a commit to the spec:
+
+```sh
+dsh plugin --profile desktop add github:liuluopeng/dsh_peeker#<commit-sha>
+```
+
+Reopen `DeepSeek Harness.app` after the command finishes. The plugin has no build step, so pnpm does not need `allowBuilds` approval.
+
+### From a local checkout
+
 From the directory that contains this checkout:
 
 ```sh
@@ -28,7 +47,7 @@ cd /Volumes/six/FLUT
 dsh plugin --profile desktop add ./lx_dsh_peek
 ```
 
-The profile records an absolute `link:` to this checkout, so this plugin currently lives at `/Volumes/six/FLUT/lx_dsh_peek`. Restart DSH after installing or after moving/relinking the checkout; the running process keeps the package directory it loaded at startup. The plugin requires Node.js ≥ 20 and DSH `>=0.2.0-rc.1 <0.3.0` (`engines.dsh`).
+The profile records an absolute `link:` to the checkout. Restart DSH after installing or after moving/relinking the checkout; the running process keeps the package directory it loaded at startup. The plugin requires Node.js ≥ 20 and DSH `>=0.2.0-rc.1 <0.3.0` (`engines.dsh`).
 
 ## Official DSH font and conversation width without a patched DMG
 
@@ -78,6 +97,18 @@ Set the actual sizes and width in `cordis.patch.yml`:
 ```
 
 The width has no official Settings row. The font Settings row still displays the official maximum (22/16/20); change the plugin config, not the Settings row. Keep the profile's `ui-theme` values within the official schema (22/16/20) so the theme plugin validates; the override supplies the larger rendered sizes.
+
+For a package installed from GitHub, do not edit files under `node_modules`. Put an id-targeted override in `~/.dsh/profiles/desktop/cordis.patch.yml` instead:
+
+```yaml
+- id: lx-dsh-peek
+  config:
+    port: 3082
+    contentWidth: 1400
+    fontSize: 34
+    codeFontSize: 24
+    terminalFontSize: 24
+```
 
 ## Open
 
