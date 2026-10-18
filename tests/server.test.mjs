@@ -148,6 +148,7 @@ test('serves the light single-page peek UI', async () => {
   assert.doesNotMatch(body, /<details/)
   assert.doesNotMatch(body, /overflow: auto/)
   assert.doesNotMatch(body, /pointerdown/)
+  assert.match(body, /applyEvent\(pane, record\.event, true\)/)
   assert.match(body, /font: 15px/)
 })
 

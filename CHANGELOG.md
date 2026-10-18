@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.5 — 2026-10-18
+
+- Fix a snapshot regression: replaying a session's history no longer destroys a pane when the history contains an older `turn/end`. Only a live `turn/end` removes the pane; historical turn boundaries are ignored during snapshot rendering.
+
 ## 0.5.4 — 2026-10-18
 
 - Make the phone page strictly view-only: `pointer-events: none`, `touch-action: none`, no text selection or callout, zoom disabled, and captured listeners that swallow context menu, selection, drag, wheel, touchmove, and click. All scrollbars are hidden.

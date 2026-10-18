@@ -357,7 +357,7 @@
     return pane.live
   }
 
-  function applyEvent(pane, event) {
+  function applyEvent(pane, event, historical = false) {
     const data = event && event.data ? event.data : {}
     switch (event && event.type) {
       case 'user/message':
@@ -414,6 +414,10 @@
         paintPane(pane)
         break
       case 'turn/end':
+        // A snapshot replays old turns; only a live turn/end destroys the pane.
+        // Otherwise opening the page on any session with history would remove
+        // the pane immediately after its first snapshot.
+        if (historical) break
         pane.running = false
         pane.startedAt = 0
         // A finished task owns no window: drop the pane immediately and keep the
@@ -652,7 +656,7 @@
         pane.items.push({ kind: 'note', text: `已省略最早的 ${payload.dropped} 条事件，下面只显示最近的内容`, time: Date.now() })
       }
       for (const record of Array.isArray(payload.records) ? payload.records : []) {
-        if (record && record.type === 'event' && record.event) applyEvent(pane, record.event)
+        if (record && record.type === 'event' && record.event) applyEvent(pane, record.event, true)
       }
       pane.streamState = 'open'
       paintPane(pane)
