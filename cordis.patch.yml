@@ -5,3 +5,8 @@
       name: lx_dsh_peek
       config:
         port: 3082
+        # Official DSH caps its Settings font at 22px; this style override is
+        # what actually sets the rendered size. Change these, not the Settings row.
+        fontSize: 34
+        codeFontSize: 24
+        terminalFontSize: 24

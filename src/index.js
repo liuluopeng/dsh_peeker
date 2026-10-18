@@ -159,11 +159,31 @@ export function apply(ctx, config) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error(`lx_dsh_peek: port must be an integer from 1 to 65535, got ${JSON.stringify(config?.port)}`)
   }
+  const fontSize = Number(config?.fontSize ?? 34)
+  const codeFontSize = Number(config?.codeFontSize ?? 24)
+  const terminalFontSize = Number(config?.terminalFontSize ?? 24)
+  for (const [name, value] of [['fontSize', fontSize], ['codeFontSize', codeFontSize], ['terminalFontSize', terminalFontSize]]) {
+    if (!Number.isInteger(value) || value < 8 || value > 80) {
+      throw new Error(`lx_dsh_peek: ${name} must be an integer from 8 to 80, got ${JSON.stringify(value)}`)
+    }
+  }
+  const fontStyle = `:root, body {
+  --dsh-content-font-size: ${fontSize}px !important;
+  --dsh-code-font-size: ${codeFontSize}px !important;
+  --dsh-terminal-font-size: ${terminalFontSize}px !important;
+}`
 
   const page = readFileSync(new URL('./page.html', import.meta.url), 'utf8')
   /** @type {Set<{ controller: AbortController, res: import('node:http').ServerResponse }>} */
   const streams = new Set()
   let disposed = false
+
+  ctx.effect(() => {
+    const off = ctx.on('webserver/index-inject', (table) => {
+      table.push({ kind: 'style', text: fontStyle })
+    })
+    return () => { if (typeof off === 'function') off() }
+  }, 'lx-dsh-peek:font-override')
 
   async function handle(req, res) {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`)

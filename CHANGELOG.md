@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0 — 2026-10-18
+
+- Inject a host-side `!important` style into every DSH UI page, overriding the official theme's inline font variables. This lets the official DSH build use a larger font without a patched DMG; defaults are 34px content, 24px code, 24px terminal.
+- Configure the override in `cordis.patch.yml` (`fontSize`, `codeFontSize`, `terminalFontSize`).
+
 ## 0.3.0 — 2026-10-18
 
 - Auto-expand assistant reasoning in the transcript.

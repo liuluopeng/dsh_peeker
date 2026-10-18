@@ -45,9 +45,17 @@ const jobController = {
   },
 }
 
+const listeners = []
 const ctx = {
   get(name) {
     return name === 'jobController' ? jobController : undefined
+  },
+  on(event, listener) {
+    listeners.push({ event, listener })
+    return () => {
+      const index = listeners.findIndex((entry) => entry.listener === listener)
+      if (index >= 0) listeners.splice(index, 1)
+    }
   },
   effect(fn) {
     dispose = fn()
@@ -128,6 +136,18 @@ test('serves the light single-page peek UI', async () => {
   assert.match(body, /reasoning-text/)
   assert.match(body, /job-output/)
   assert.match(body, /font: 15px/)
+})
+
+test('injects the official UI font override', () => {
+  const table = []
+  for (const entry of listeners) {
+    if (entry.event === 'webserver/index-inject') entry.listener(table)
+  }
+  assert.equal(table.length, 1)
+  assert.equal(table[0].kind, 'style')
+  assert.match(table[0].text, /--dsh-content-font-size: 34px !important/)
+  assert.match(table[0].text, /--dsh-code-font-size: 24px !important/)
+  assert.match(table[0].text, /--dsh-terminal-font-size: 24px !important/)
 })
 
 test('lists sessions and refuses writes', async () => {
