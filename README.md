@@ -80,6 +80,8 @@ When `contentWidth` is nonzero, the same style row also pins the conversation wi
 
 The official conversation column is adaptive and caps at 920px. The pinned width applies to the transcript, message bubbles, wide tables, composer, and approval/question panels. `contentWidth` defaults to 1200px and accepts `0` or an integer from 640 to 2400. Set `0` to keep the official width and its drag handles; a nonzero width hides the handles because the pinned width ignores their preference.
 
+`contentWidth` cannot exceed the center pane. On desktop the left sidebar occupies 264–420px and an open right sidebar starts at 300px, so a 1600px-wide window can leave under 900px for the conversation. Collapse the right sidebar with `⌘⌥B` and the left sidebar with `⌘B` (macOS desktop), or drag them narrower, then set `contentWidth` to a larger value such as 2000–2400 to fill the freed center.
+
 Install this bundle in the `desktop` profile, launch the official `DeepSeek Harness.app`, and the overrides apply. No patched DMG, no client bundle, and the official app's auto-update does not remove anything under `~/.dsh`.
 
 Set the actual sizes and width in `cordis.patch.yml`:
