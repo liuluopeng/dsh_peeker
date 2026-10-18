@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.3 — 2026-10-18
+
+- Remove the `任务结束` toast. Completion feedback is now only the transient full-screen flash (and vibration where allowed).
+- Destroy a pane as soon as its task ends. A live `turn/end` removes it immediately, and polling removes any pane whose session is no longer running instead of keeping completed panes for 20 seconds.
+
 ## 0.5.2 — 2026-10-18
 
 - Keep every pane pinned to its newest line. The page now follows new reasoning, tool output, and transcript rows unconditionally instead of waiting until the reader is within 120px of the bottom; it also re-pins after grid/job-band changes and once per second.

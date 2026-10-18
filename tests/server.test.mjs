@@ -139,6 +139,9 @@ test('serves the light single-page peek UI', async () => {
   assert.match(body, /dispatchFrame/)
   assert.doesNotMatch(body, /nearBottom/)
   assert.match(body, /pane\.body\.scrollTop = pane\.body\.scrollHeight/)
+  assert.doesNotMatch(body, /任务结束/)
+  assert.doesNotMatch(body, /id="toast"/)
+  assert.doesNotMatch(body, /KEEP_COMPLETED_MS/)
   assert.match(body, /font: 15px/)
 })
 

@@ -109,13 +109,6 @@
     color: var(--muted); font-size: 11px;
   }
   #flash { position: fixed; inset: 0; z-index: 9999; background: #ffe066; opacity: 0; pointer-events: none; }
-  #toast {
-    position: fixed; left: 50%; bottom: calc(38px + env(safe-area-inset-bottom)); z-index: 10000;
-    transform: translateX(-50%) translateY(20px); opacity: 0; pointer-events: none;
-    padding: 7px 14px; border: 1px solid #86d3a4; border-radius: 999px;
-    background: #e8f7ee; color: #166534; font-size: 13px; transition: .2s;
-  }
-  #toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
   .spinner {
     flex: 0 0 auto; width: 10px; height: 10px; border: 2px solid #cbd5e1;
     border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite;
@@ -158,11 +151,9 @@
 <main id="panes" data-count="0"></main>
 <footer><span>只读 · 无输入 · 局域网可见</span><span id="meta">活跃 0 · 显示 0</span><span id="orientation">竖屏</span><span id="clock"></span></footer>
 <div id="flash"></div>
-<div id="toast"></div>
 <script>
 (() => {
   const MAX_PANES = 4
-  const KEEP_COMPLETED_MS = 20000
   const POLL_MS = 3000
   const JOB_KEEP_MS = 12000
   const JOB_OUTPUT_LIMIT = 12000
@@ -172,10 +163,11 @@
   const metaEl = document.getElementById('meta')
   const clockEl = document.getElementById('clock')
   const flashEl = document.getElementById('flash')
-  const toastEl = document.getElementById('toast')
   const panes = new Map()
+  // Sessions whose pane was destroyed by a turn/end. Keep them out of the next
+  // poll's re-creation check until the host stops reporting them as running.
+  const dismissed = new Set()
   let syncing = false
-  let toastTimer = 0
   let streamSource = null
   let streamKey = ''
   let streamOpen = false
@@ -266,7 +258,7 @@
       pane.elapsedEl.hidden = false
       pane.elapsedEl.dataset.since = String(pane.startedAt)
     } else {
-      pane.statusEl.textContent = pane.completedAt > 0 ? '已完成' : pane.streamState === 'ended' ? '流已结束' : '空闲'
+      pane.statusEl.textContent = pane.streamState === 'ended' ? '流已结束' : '空闲'
       pane.elapsedEl.hidden = true
       delete pane.elapsedEl.dataset.since
       pane.elapsedEl.textContent = ''
@@ -410,15 +402,16 @@
       }
       case 'turn/start':
         pane.running = true
-        pane.completedAt = 0
         pane.startedAt = Number(event.time) || Date.now()
         paintPane(pane)
         break
       case 'turn/end':
         pane.running = false
-        pane.completedAt = Date.now()
         pane.startedAt = 0
-        paintPane(pane)
+        // A finished task owns no window: drop the pane immediately and keep the
+        // next poll from recreating it while the host still reports it running.
+        dismissed.add(pane.id)
+        removePane(pane)
         break
       default:
         break
@@ -458,10 +451,6 @@
       [{ opacity: 0 }, { opacity: 0.9 }, { opacity: 0 }],
       { duration: 260, iterations: count, easing: 'ease-in-out' },
     )
-    toastEl.textContent = '任务结束 ✓'
-    toastEl.classList.add('on')
-    clearTimeout(toastTimer)
-    toastTimer = setTimeout(() => toastEl.classList.remove('on'), 2200)
     if (navigator.vibrate && navigator.userActivation?.hasBeenActive) navigator.vibrate([120, 80, 120, 80, 120])
   }
 
@@ -524,6 +513,11 @@
   /** Route one multiplexed frame to its pane; single-session frames stay untagged. */
   function dispatchFrame(payload) {
     if (!payload || typeof payload !== 'object') return
+    // Completion feedback is global: the finished pane may already be gone.
+    if (payload.t === 'flash') {
+      flashScreen(payload.times)
+      return
+    }
     const id = typeof payload.sessionId === 'string' ? payload.sessionId : null
     if (id !== null) {
       const pane = panes.get(id)
@@ -666,10 +660,6 @@
       applyDelta(pane, payload.frame)
       return
     }
-    if (payload.t === 'flash') {
-      flashScreen(payload.times)
-      return
-    }
     if (payload.t === 'jobs') {
       applyJobRows(pane, payload.jobs)
       return
@@ -726,12 +716,13 @@
     panesEl.append(root)
     const pane = {
       id: session.sessionId, title: session.title || session.sessionId, updatedAt: Number(session.updatedAt) || 0,
-      running: session.running === true, completedAt: 0, streamState: streamOpen ? 'open' : 'connecting',
+      running: session.running === true, streamState: streamOpen ? 'open' : 'connecting',
       items: [], live: null, liveNode: null, snapshot: false,
       startedAt: 0, jobs: new Map(), jobsEl, elapsedEl: elapsed,
       root, titleEl: title, dotEl: dot, statusEl: status, body,
     }
     panes.set(pane.id, pane)
+    dismissed.delete(pane.id)
     paintPane(pane)
     updateLayout()
     return pane
@@ -751,12 +742,18 @@
       const body = await response.json()
       if (!response.ok) throw new Error(body && body.error ? body.error : '无法读取会话')
       const sessions = Array.isArray(body.items) ? body.items : []
-      const active = sessions
-        .filter((session) => session.running === true)
+      const running = sessions.filter((session) => session.running === true)
+      const runningIds = new Set(running.map((session) => session.sessionId))
+      for (const id of [...dismissed]) {
+        if (!runningIds.has(id)) dismissed.delete(id)
+      }
+      const active = running
+        .filter((session) => !dismissed.has(session.sessionId))
         .sort((left, right) => (Number(right.updatedAt) || 0) - (Number(left.updatedAt) || 0))
       const activeIds = new Set(active.map((session) => session.sessionId))
       let needReopen = false
 
+      const finished = []
       for (const pane of panes.values()) {
         const session = sessions.find((candidate) => candidate.sessionId === pane.id)
         if (session) {
@@ -764,26 +761,21 @@
           pane.updatedAt = Number(session.updatedAt) || pane.updatedAt
         }
         if (activeIds.has(pane.id)) {
-          if (!pane.running) {
-            pane.running = true
-            pane.completedAt = 0
-          }
+          if (!pane.running) pane.running = true
           if (pane.streamState === 'ended') needReopen = true
-        } else if (pane.running) {
+          paintPane(pane)
+        } else {
           pane.running = false
-          pane.completedAt = Date.now()
+          finished.push(pane)
         }
-        paintPane(pane)
       }
+      for (const pane of finished) removePane(pane)
 
       for (const session of active) {
         if (panes.size >= MAX_PANES) break
         if (!panes.has(session.sessionId)) createPane(session)
       }
 
-      for (const pane of [...panes.values()]) {
-        if (pane.completedAt > 0 && Date.now() - pane.completedAt > KEEP_COMPLETED_MS) removePane(pane)
-      }
       for (const pane of [...panes.values()]) {
         if (panes.size <= MAX_PANES) break
         if (!activeIds.has(pane.id)) removePane(pane)
