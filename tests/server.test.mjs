@@ -138,7 +138,7 @@ test('serves the light single-page peek UI', async () => {
   assert.match(body, /font: 15px/)
 })
 
-test('injects the official UI font override', () => {
+test('injects the official UI font and conversation-width overrides', () => {
   const table = []
   for (const entry of listeners) {
     if (entry.event === 'webserver/index-inject') entry.listener(table)
@@ -148,6 +148,47 @@ test('injects the official UI font override', () => {
   assert.match(table[0].text, /--dsh-content-font-size: 34px !important/)
   assert.match(table[0].text, /--dsh-code-font-size: 24px !important/)
   assert.match(table[0].text, /--dsh-terminal-font-size: 24px !important/)
+  assert.match(table[0].text, /--dsh-chat-user-width: 1200px/)
+  assert.match(table[0].text, /\[data-conversation-content\] \{\s*--dsh-chat-content-width: 1200px !important/)
+  assert.match(table[0].text, /--dsh-composer-card-max-width: 1232px !important/)
+  assert.match(table[0].text, /\[data-width-handle\] \{\s*display: none !important/)
+})
+
+test('rejects an invalid conversation width', () => {
+  // Validation runs before the listener is mounted, so an empty context is enough.
+  assert.throws(() => apply({}, { port, contentWidth: 100 }), /contentWidth/)
+  assert.throws(() => apply({}, { port, contentWidth: 1.5 }), /contentWidth/)
+  assert.throws(() => apply({}, { port, contentWidth: 2401 }), /contentWidth/)
+})
+
+test('contentWidth 0 keeps the official width and drag handles', () => {
+  const injected = []
+  const disposers = []
+  const fake = {
+    get() {
+      return undefined
+    },
+    on(event, listener) {
+      if (event === 'webserver/index-inject') injected.push(listener)
+      return () => {}
+    },
+    effect(fn) {
+      const off = fn()
+      disposers.push(off)
+      return off
+    },
+  }
+  try {
+    apply(fake, { port: port + 1, contentWidth: 0 })
+    const table = []
+    for (const listener of injected) listener(table)
+    assert.equal(table.length, 1)
+    assert.match(table[0].text, /--dsh-content-font-size: 34px !important/)
+    assert.doesNotMatch(table[0].text, /--dsh-chat-content-width/)
+    assert.doesNotMatch(table[0].text, /data-width-handle/)
+  } finally {
+    for (const off of disposers.reverse()) off()
+  }
 })
 
 test('lists sessions and refuses writes', async () => {

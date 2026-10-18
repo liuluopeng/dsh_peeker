@@ -5,6 +5,11 @@
  * every request is GET, and the only Session Controller methods it calls are
  * `list()` and `follow()`. The page flashes three times when a live `turn/end`
  * event arrives.
+ *
+ * It also contributes one host-side stylesheet to every DSH index page: larger
+ * font variables and, when configured, a fixed width for the official
+ * conversation column. The injected rules are plain CSS, so they survive in the
+ * official desktop app without patching its bundle.
  */
 
 import { readFileSync } from 'node:fs'
@@ -152,7 +157,7 @@ function lanAddresses() {
 /**
  * Mount the listener.
  * @param {import('@deepseek-ai/cordis').Context} ctx
- * @param {{ port?: number } | undefined} config
+ * @param {{ port?: number, fontSize?: number, codeFontSize?: number, terminalFontSize?: number, contentWidth?: number } | undefined} config
  */
 export function apply(ctx, config) {
   const port = Number(config?.port ?? 3082)
@@ -167,11 +172,32 @@ export function apply(ctx, config) {
       throw new Error(`lx_dsh_peek: ${name} must be an integer from 8 to 80, got ${JSON.stringify(value)}`)
     }
   }
+  const contentWidth = Number(config?.contentWidth ?? 1200)
+  if (!Number.isInteger(contentWidth) || (contentWidth !== 0 && (contentWidth < 640 || contentWidth > 2400))) {
+    throw new Error(`lx_dsh_peek: contentWidth must be 0 (official width) or an integer from 640 to 2400, got ${JSON.stringify(config?.contentWidth)}`)
+  }
   const fontStyle = `:root, body {
   --dsh-content-font-size: ${fontSize}px !important;
   --dsh-code-font-size: ${codeFontSize}px !important;
   --dsh-terminal-font-size: ${terminalFontSize}px !important;
 }`
+  // The official conversation column is adaptive and caps at 920px. Pinning the
+  // shared content axis widens the transcript, dock cards, composer, and
+  // approval/question panels together. The built-in drag handles are hidden
+  // because their preference would be ignored by the pinned width; use
+  // `contentWidth: 0` to keep the official behavior instead.
+  const widthStyle = contentWidth === 0 ? '' : `
+:root, body {
+  --dsh-chat-user-width: ${contentWidth}px;
+}
+[data-conversation-content] {
+  --dsh-chat-content-width: ${contentWidth}px !important;
+  --dsh-composer-card-max-width: ${contentWidth + 32}px !important;
+}
+[data-conversation-content] [data-width-handle] {
+  display: none !important;
+}`
+  const injectedStyle = `${fontStyle}${widthStyle}`
 
   const page = readFileSync(new URL('./page.html', import.meta.url), 'utf8')
   /** @type {Set<{ controller: AbortController, res: import('node:http').ServerResponse }>} */
@@ -180,10 +206,10 @@ export function apply(ctx, config) {
 
   ctx.effect(() => {
     const off = ctx.on('webserver/index-inject', (table) => {
-      table.push({ kind: 'style', text: fontStyle })
+      table.push({ kind: 'style', text: injectedStyle })
     })
     return () => { if (typeof off === 'function') off() }
-  }, 'lx-dsh-peek:font-override')
+  }, 'lx-dsh-peek:official-ui-overrides')
 
   async function handle(req, res) {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`)

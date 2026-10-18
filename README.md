@@ -15,6 +15,7 @@ A deliberately small, read-only, **light** LAN view of the active DSH sessions.
   - more than 4 active tasks keeps the first 4 and shows `显示前 4 个`.
 - A finished task keeps its pane for 20 seconds so the final output stays visible, then the pane disappears.
 - A live `turn/end` makes the whole screen flash three times (and vibrates when the browser allows it).
+- The same host plugin can enlarge the official DSH UI's fonts and widen its conversation column from `cordis.patch.yml`, without a patched DMG.
 
 ![Live reasoning, running tool and background-command output](docs/preview-live.png)
 
@@ -33,9 +34,9 @@ dsh plugin --profile desktop add ./lx_dsh_peek
 
 The profile records an absolute `link:` to this checkout, so this plugin currently lives at `/Volumes/six/FLUT/lx_dsh_peek`. Restart DSH after installing or after moving/relinking the checkout; the running process keeps the package directory it loaded at startup. The plugin requires Node.js ≥ 20 and DSH `>=0.2.0-rc.1 <0.3.0` (`engines.dsh`).
 
-## Official DSH font without a patched DMG
+## Official DSH font and conversation width without a patched DMG
 
-The same host plugin can enlarge the **official** DSH UI. It listens to the Host's `webserver/index-inject` event and injects one style row into every DSH index page:
+The same host plugin can enlarge and widen the **official** DSH UI. It listens to the Host's `webserver/index-inject` event and injects one style row into every DSH index page:
 
 ```css
 :root, body {
@@ -45,9 +46,28 @@ The same host plugin can enlarge the **official** DSH UI. It listens to the Host
 }
 ```
 
-The official theme writes its font variables to `body` as normal inline styles; the `!important` stylesheet rule wins, so the rendered UI uses these values even though the official Settings schema still caps the text row at 22px (code 16, terminal 20). Install this bundle in the `desktop` profile, launch the official `DeepSeek Harness.app`, and the override applies. No patched DMG, no client bundle, and the official app's auto-update does not remove anything under `~/.dsh`.
+The official theme writes its font variables to `body` as normal inline styles; the `!important` stylesheet rule wins, so the rendered UI uses these values even though the official Settings schema still caps the text row at 22px (code 16, terminal 20).
 
-Set the actual sizes in `cordis.patch.yml`:
+When `contentWidth` is nonzero, the same style row also pins the conversation width:
+
+```css
+:root, body {
+  --dsh-chat-user-width: 1200px;
+}
+[data-conversation-content] {
+  --dsh-chat-content-width: 1200px !important;
+  --dsh-composer-card-max-width: 1232px !important;
+}
+[data-conversation-content] [data-width-handle] {
+  display: none !important;
+}
+```
+
+The official conversation column is adaptive and caps at 920px. The pinned width applies to the transcript, message bubbles, wide tables, composer, and approval/question panels. `contentWidth` defaults to 1200px and accepts `0` or an integer from 640 to 2400. Set `0` to keep the official width and its drag handles; a nonzero width hides the handles because the pinned width ignores their preference.
+
+Install this bundle in the `desktop` profile, launch the official `DeepSeek Harness.app`, and the overrides apply. No patched DMG, no client bundle, and the official app's auto-update does not remove anything under `~/.dsh`.
+
+Set the actual sizes and width in `cordis.patch.yml`:
 
 ```yaml
 - insert:
@@ -55,12 +75,13 @@ Set the actual sizes in `cordis.patch.yml`:
       name: lx_dsh_peek
       config:
         port: 3082
+        contentWidth: 1200
         fontSize: 34
         codeFontSize: 24
         terminalFontSize: 24
 ```
 
-The Settings row still displays the official maximum (22/16/20); change the plugin config, not the Settings row. Keep the profile's `ui-theme` values within the official schema (22/16/20) so the theme plugin validates; the override supplies the larger rendered sizes.
+The width has no official Settings row. The font Settings row still displays the official maximum (22/16/20); change the plugin config, not the Settings row. Keep the profile's `ui-theme` values within the official schema (22/16/20) so the theme plugin validates; the override supplies the larger rendered sizes.
 
 ## Open
 
@@ -74,7 +95,7 @@ Open that URL on a phone connected to the same Wi-Fi. There is no login and no k
 
 ## Configuration
 
-Change the port in `cordis.patch.yml`:
+Change the port, conversation width, or font sizes in `cordis.patch.yml`:
 
 ```yaml
 - insert:
@@ -82,6 +103,7 @@ Change the port in `cordis.patch.yml`:
       name: lx_dsh_peek
       config:
         port: 3083
+        contentWidth: 1200
         fontSize: 34
         codeFontSize: 24
         terminalFontSize: 24
@@ -95,11 +117,11 @@ No runtime dependencies; the plugin uses only Node built-ins.
 node --test tests/server.test.mjs
 ```
 
-The test boots the plugin with a mock `sessionController` and `jobController`, checks the page, session listing, the SSE snapshot/delta/job-output/flash stream, the read-only response, and the injected official-UI font style. The page uses CSS `@media (orientation: landscape)` for layout and `matchMedia` for the footer's `竖屏`/`横屏` label.
+The test boots the plugin with a mock `sessionController` and `jobController`, checks the page, session listing, the SSE snapshot/delta/job-output/flash stream, the read-only response, the injected official-UI font and conversation-width styles, and invalid-width rejection. The page uses CSS `@media (orientation: landscape)` for layout and `matchMedia` for the footer's `竖屏`/`横屏` label.
 
 ### Layout
 
-- `src/index.js` — Host plugin, HTTP/SSE listener, session listing and snapshot budget, optional `jobController` forwarding.
+- `src/index.js` — Host plugin, HTTP/SSE listener, session listing and snapshot budget, optional `jobController` forwarding, official-UI font/width style injection.
 - `src/page.html` — light mobile page, active-task panes, orientation layout, flash.
 - `cordis.patch.yml` — bundle layer that inserts the `lx-dsh-peek` row.
 - `tests/server.test.mjs` — keyless mock test.

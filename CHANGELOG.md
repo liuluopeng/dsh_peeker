@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.0 — 2026-10-18
+
+- Widen the official DSH conversation column by injecting `--dsh-chat-content-width` and `--dsh-composer-card-max-width` overrides. Defaults to 1200px; configure with `contentWidth` (0 keeps the official adaptive width and drag handles).
+- Hide the official width drag handles while a pinned width is active, since the pinned width ignores their preference.
+
 ## 0.4.0 — 2026-10-18
 
 - Inject a host-side `!important` style into every DSH UI page, overriding the official theme's inline font variables. This lets the official DSH build use a larger font without a patched DMG; defaults are 34px content, 24px code, 24px terminal.
