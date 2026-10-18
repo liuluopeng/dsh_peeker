@@ -5,9 +5,9 @@
       name: lx_dsh_peek
       config:
         port: 3082
-        # Conversation column width in px (0 = official adaptive width and
-        # drag handles). A nonzero value pins the transcript and composer.
-        contentWidth: 1200
+        # 'fill' uses the whole conversation pane. A number (640–2400) caps the
+        # transcript/composer; 0 restores the official width and drag handles.
+        contentWidth: fill
         # Official DSH caps its Settings font at 22px; this style override is
         # what actually sets the rendered size. Change these, not the Settings row.
         fontSize: 34

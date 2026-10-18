@@ -33,6 +33,12 @@ const SECURITY_HEADERS = {
   'connection': 'close',
 }
 
+/**
+ * CSS cap used by `contentWidth: 'fill'`. The transcript and composer keep
+ * `width: 100%`, so any cap above the pane width makes them fill the pane.
+ */
+const FILL_WIDTH = 10_000
+
 /** @param {import('node:http').ServerResponse} res */
 function sendJson(res, status, value) {
   const body = JSON.stringify(value)
@@ -173,7 +179,7 @@ function lanAddresses() {
 /**
  * Mount the listener.
  * @param {import('@deepseek-ai/cordis').Context} ctx
- * @param {{ port?: number, fontSize?: number, codeFontSize?: number, terminalFontSize?: number, contentWidth?: number } | undefined} config
+ * @param {{ port?: number, fontSize?: number, codeFontSize?: number, terminalFontSize?: number, contentWidth?: number | 'fill' } | undefined} config
  */
 export function apply(ctx, config) {
   const port = Number(config?.port ?? 3082)
@@ -188,9 +194,10 @@ export function apply(ctx, config) {
       throw new Error(`lx_dsh_peek: ${name} must be an integer from 8 to 80, got ${JSON.stringify(value)}`)
     }
   }
-  const contentWidth = Number(config?.contentWidth ?? 1200)
-  if (!Number.isInteger(contentWidth) || (contentWidth !== 0 && (contentWidth < 640 || contentWidth > 2400))) {
-    throw new Error(`lx_dsh_peek: contentWidth must be 0 (official width) or an integer from 640 to 2400, got ${JSON.stringify(config?.contentWidth)}`)
+  const rawContentWidth = config?.contentWidth ?? 'fill'
+  const contentWidth = rawContentWidth === 'fill' ? FILL_WIDTH : Number(rawContentWidth)
+  if (rawContentWidth !== 'fill' && (!Number.isInteger(contentWidth) || (contentWidth !== 0 && (contentWidth < 640 || contentWidth > 2400)))) {
+    throw new Error(`lx_dsh_peek: contentWidth must be 'fill', 0 (official width), or an integer from 640 to 2400, got ${JSON.stringify(config?.contentWidth)}`)
   }
   const fontStyle = `:root, body {
   --dsh-content-font-size: ${fontSize}px !important;
@@ -199,9 +206,11 @@ export function apply(ctx, config) {
 }`
   // The official conversation column is adaptive and caps at 920px. Pinning the
   // shared content axis widens the transcript, dock cards, composer, and
-  // approval/question panels together. The built-in drag handles are hidden
-  // because their preference would be ignored by the pinned width; use
-  // `contentWidth: 0` to keep the official behavior instead.
+  // approval/question panels together. `fill` uses a cap above any real pane so
+  // the official `width: 100%` rules consume the whole conversation pane; a
+  // number pins a readable maximum. The built-in drag handles are hidden because
+  // their preference would be ignored; `contentWidth: 0` keeps the official
+  // behavior instead.
   const widthStyle = contentWidth === 0 ? '' : `
 :root, body {
   --dsh-chat-user-width: ${contentWidth}px;

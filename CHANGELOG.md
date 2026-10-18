@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.7 — 2026-10-18
+
+- Change the default `contentWidth` from `1200px` to `fill`. The old fixed cap widened the pane but left a 1200px text column centered inside it; `fill` maps to a 10000px cap so the official `width: 100%` rules let the transcript, assistant/user text, tables, and composer use the whole conversation pane. A number from 640 to 2400 still pins a fixed measure, and 0 keeps the official width.
+
 ## 0.5.6 — 2026-10-18
 
 - Follow subagent sessions with their durable parent address instead of a plain session address. The session list now exposes `parentSessionId`, the page passes it alongside each subagent `sessionId`, and the server follows `{ kind: 'subagent', parentSessionId, childSessionId, mode: 'unknown' }`. This fixes the pane that showed the subagent's approval/transcript text and then stayed on `连接中` because the Host rejected `{ kind: 'session' }` for a subagent child.

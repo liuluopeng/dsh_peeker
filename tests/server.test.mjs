@@ -174,9 +174,9 @@ test('injects the official UI font and conversation-width overrides', () => {
   assert.match(table[0].text, /--dsh-content-font-size: 34px !important/)
   assert.match(table[0].text, /--dsh-code-font-size: 24px !important/)
   assert.match(table[0].text, /--dsh-terminal-font-size: 24px !important/)
-  assert.match(table[0].text, /--dsh-chat-user-width: 1200px/)
-  assert.match(table[0].text, /\[data-conversation-content\] \{\s*--dsh-chat-content-width: 1200px !important/)
-  assert.match(table[0].text, /--dsh-composer-card-max-width: 1232px !important/)
+  assert.match(table[0].text, /--dsh-chat-user-width: 10000px/)
+  assert.match(table[0].text, /\[data-conversation-content\] \{\s*--dsh-chat-content-width: 10000px !important/)
+  assert.match(table[0].text, /--dsh-composer-card-max-width: 10032px !important/)
   assert.match(table[0].text, /\[data-width-handle\] \{\s*display: none !important/)
 })
 
@@ -185,6 +185,7 @@ test('rejects an invalid conversation width', () => {
   assert.throws(() => apply({}, { port, contentWidth: 100 }), /contentWidth/)
   assert.throws(() => apply({}, { port, contentWidth: 1.5 }), /contentWidth/)
   assert.throws(() => apply({}, { port, contentWidth: 2401 }), /contentWidth/)
+  assert.throws(() => apply({}, { port, contentWidth: 'max' }), /contentWidth/)
 })
 
 test('contentWidth 0 keeps the official width and drag handles', () => {
