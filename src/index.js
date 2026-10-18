@@ -27,6 +27,10 @@ const SECURITY_HEADERS = {
   'referrer-policy': 'no-referrer',
   'x-frame-options': 'DENY',
   'cache-control': 'no-store',
+  // JSON and HTML answers close their socket; the SSE response below overrides
+  // this with keep-alive. That leaves exactly one long-lived browser connection
+  // on constrained mobile browsers, even while a /api/sessions poll is in flight.
+  'connection': 'close',
 }
 
 /** @param {import('node:http').ServerResponse} res */
@@ -242,16 +246,16 @@ export function apply(ctx, config) {
   }
 
   /**
-   * Forward the session's background-job roster and live output on the same SSE
-   * stream as the transcript. One connection per pane keeps the browser below its
-   * six-connection HTTP/1.1 limit even with four panes.
+   * Forward one session's background-job roster and live output through the
+   * caller's emitter. Each pane no longer owns a browser connection, so every
+   * job frame carries the session id that owns it.
    */
-  function startJobStreaming(sessionId, res, signal) {
+  function startJobStreaming(sessionId, emit, signal) {
     const jobController = ctx.get('jobController')
     if (jobController === undefined) return () => {}
     const follows = new Map()
     const send = (payload) => {
-      if (!signal.aborted && !res.writableEnded && !res.destroyed) sendEvent(res, payload)
+      if (!signal.aborted) emit(sessionId, payload)
     }
     const stop = () => {
       for (const controller of follows.values()) controller.abort()
@@ -301,16 +305,27 @@ export function apply(ctx, config) {
     return stop
   }
 
+  /**
+   * Serve one SSE stream for one or more sessions.
+   *
+   * The mobile page opens a single connection and passes every visible session
+   * as a repeated `sessionId` parameter. A one-session request keeps the old
+   * untagged payloads; a multi-session request tags every payload with its
+   * `sessionId` so the page can dispatch it to the right pane. This avoids the
+   * per-origin connection limit (and queued EventSources) that left a second
+   * pane stuck on "连接中" on mobile browsers.
+   */
   async function handleStream(req, res, url) {
     if (disposed) {
       sendJson(res, 503, { error: 'plugin disposed' })
       return
     }
-    const sessionId = url.searchParams.get('sessionId') ?? ''
-    if (sessionId === '') {
+    const sessionIds = [...new Set(url.searchParams.getAll('sessionId').filter((value) => value !== ''))]
+    if (sessionIds.length === 0) {
       sendJson(res, 400, { error: 'sessionId is required' })
       return
     }
+    const multi = sessionIds.length > 1
     res.writeHead(200, {
       ...SECURITY_HEADERS,
       'content-type': 'text/event-stream; charset=utf-8',
@@ -318,15 +333,24 @@ export function apply(ctx, config) {
       'x-accel-buffering': 'no',
     })
     res.write('retry: 2000\n\n')
-    const controller = new AbortController()
-    const entry = { controller, res }
-    streams.add(entry)
-    const jobAbort = new AbortController()
-    const stopJobs = startJobStreaming(sessionId, res, jobAbort.signal)
+    const controllers = new Map()
+    const jobAborts = new Map()
+    let entry
+    let closed = false
     const stop = () => {
-      controller.abort()
-      jobAbort.abort()
-      streams.delete(entry)
+      if (closed) return
+      closed = true
+      for (const controller of controllers.values()) controller.abort()
+      for (const abort of jobAborts.values()) abort.abort()
+      controllers.clear()
+      jobAborts.clear()
+      if (entry !== undefined) streams.delete(entry)
+    }
+    entry = { res, stop }
+    streams.add(entry)
+    const emit = (sessionId, payload) => {
+      if (closed || disposed || res.writableEnded || res.destroyed) return
+      sendEvent(res, multi ? { ...payload, sessionId } : payload)
     }
     req.on('close', stop)
     res.on('close', stop)
@@ -335,34 +359,49 @@ export function apply(ctx, config) {
         try { res.write(': ping\n\n') } catch { stop() }
       }
     }, 15000)
-    try {
-      const frames = ctx.sessionController.follow({
-        address: { kind: 'session', sessionId },
-        maxMessages: 200,
-        assistantStream: true,
-      }, controller.signal)
-      for await (const frame of frames) {
-        if (controller.signal.aborted || disposed) break
-        if (frame?.type === 'snapshot') {
-          const fitted = fitSnapshot(frame.records)
-          sendEvent(res, { t: 'snapshot', records: fitted.records, dropped: fitted.dropped })
-        } else if (frame?.type === 'event') {
-          sendEvent(res, { t: 'event', event: shrink(trimEvent(frame.event)) })
-          if (frame.event?.type === 'turn/end') sendEvent(res, { t: 'flash', times: 3 })
-        } else if (frame?.type === 'assistant-stream') {
-          sendEvent(res, { t: 'delta', frame: frame.frame })
+    const followSession = async (sessionId) => {
+      const controller = new AbortController()
+      controllers.set(sessionId, controller)
+      const jobAbort = new AbortController()
+      jobAborts.set(sessionId, jobAbort)
+      const stopJobs = startJobStreaming(sessionId, emit, jobAbort.signal)
+      try {
+        const frames = ctx.sessionController.follow({
+          address: { kind: 'session', sessionId },
+          maxMessages: 200,
+          assistantStream: true,
+        }, controller.signal)
+        for await (const frame of frames) {
+          if (controller.signal.aborted || disposed) break
+          if (frame?.type === 'snapshot') {
+            const fitted = fitSnapshot(frame.records)
+            emit(sessionId, { t: 'snapshot', records: fitted.records, dropped: fitted.dropped })
+          } else if (frame?.type === 'event') {
+            emit(sessionId, { t: 'event', event: shrink(trimEvent(frame.event)) })
+            if (frame.event?.type === 'turn/end') emit(sessionId, { t: 'flash', times: 3 })
+          } else if (frame?.type === 'assistant-stream') {
+            emit(sessionId, { t: 'delta', frame: frame.frame })
+          }
         }
+      } catch (error) {
+        if (!controller.signal.aborted && !disposed) {
+          emit(sessionId, { t: 'error', message: String(error?.message ?? error) })
+        }
+      } finally {
+        controllers.delete(sessionId)
+        jobAborts.delete(sessionId)
+        jobAbort.abort()
+        stopJobs()
       }
-      if (!controller.signal.aborted && !disposed) sendEvent(res, { t: 'end' })
-    } catch (error) {
-      if (!controller.signal.aborted && !disposed) {
-        sendEvent(res, { t: 'error', message: String(error?.message ?? error) })
+    }
+    try {
+      await Promise.all(sessionIds.map((sessionId) => followSession(sessionId)))
+      if (!closed && !disposed) {
+        for (const sessionId of sessionIds) emit(sessionId, { t: 'end' })
       }
     } finally {
       clearInterval(ping)
-      jobAbort.abort()
-      stopJobs()
-      streams.delete(entry)
+      stop()
       if (!res.writableEnded) res.end()
     }
   }
@@ -387,7 +426,7 @@ export function apply(ctx, config) {
     return () => {
       disposed = true
       for (const entry of streams) {
-        try { entry.controller.abort() } catch { /* already gone */ }
+        try { entry.stop() } catch { /* already gone */ }
         try { entry.res.end() } catch { /* already closed */ }
       }
       streams.clear()

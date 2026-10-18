@@ -7,6 +7,7 @@ A deliberately small, read-only, **light** LAN view of the active DSH sessions.
 - Autodiscovers active (running) sessions every 3 seconds; there is no session picker.
 - Auto-expands assistant reasoning as it streams.
 - Streams live background-job output (running commands) from the Host's `jobController`, with a spinner and elapsed time; running tool calls show the same indicator.
+- All visible panes share one SSE connection; every frame carries its `sessionId`. This avoids the mobile per-origin connection limit that left a second pane stuck on `连接中`.
 - The peek page's default text size is 15px; the pane header shows a moving activity bar and elapsed time while a turn runs.
 - Layout follows the viewport orientation:
   - portrait: 2 and 3 panes stack as rows;
@@ -37,6 +38,8 @@ dsh plugin --profile desktop add github:liuluopeng/dsh_peeker#<commit-sha>
 ```
 
 Reopen `DeepSeek Harness.app` after the command finishes. The plugin has no build step, so pnpm does not need `allowBuilds` approval.
+
+To update a GitHub install, fully quit the app, rerun the same `add` command (it re-resolves the repository's `main`), then reopen the app.
 
 ### From a local checkout
 
@@ -146,12 +149,12 @@ No runtime dependencies; the plugin uses only Node built-ins.
 node --test tests/server.test.mjs
 ```
 
-The test boots the plugin with a mock `sessionController` and `jobController`, checks the page, session listing, the SSE snapshot/delta/job-output/flash stream, the read-only response, the injected official-UI font and conversation-width styles, and invalid-width rejection. The page uses CSS `@media (orientation: landscape)` for layout and `matchMedia` for the footer's `竖屏`/`横屏` label.
+The test boots the plugin with a mock `sessionController` and `jobController`, checks the page, session listing, the SSE snapshot/delta/job-output/flash stream, multiplexing two sessions over one tagged stream, the read-only response, the injected official-UI font and conversation-width styles, and invalid-width rejection. The page uses CSS `@media (orientation: landscape)` for layout and `matchMedia` for the footer's `竖屏`/`横屏` label.
 
 ### Layout
 
-- `src/index.js` — Host plugin, HTTP/SSE listener, session listing and snapshot budget, optional `jobController` forwarding, official-UI font/width style injection.
-- `src/page.html` — light mobile page, active-task panes, orientation layout, flash.
+- `src/index.js` — Host plugin, HTTP/SSE listener, session listing and snapshot budget, optional `jobController` forwarding, multiplexed per-session frames, official-UI font/width style injection.
+- `src/page.html` — light mobile page, active-task panes, one shared SSE connection, orientation layout, flash.
 - `cordis.patch.yml` — bundle layer that inserts the `lx-dsh-peek` row.
 - `tests/server.test.mjs` — keyless mock test.
 

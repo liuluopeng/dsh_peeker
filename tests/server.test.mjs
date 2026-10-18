@@ -135,6 +135,8 @@ test('serves the light single-page peek UI', async () => {
   assert.match(body, /MAX_PANES = 4/)
   assert.match(body, /reasoning-text/)
   assert.match(body, /job-output/)
+  assert.match(body, /openSharedStream/)
+  assert.match(body, /dispatchFrame/)
   assert.match(body, /font: 15px/)
 })
 
@@ -194,6 +196,7 @@ test('contentWidth 0 keeps the official width and drag handles', () => {
 test('lists sessions and refuses writes', async () => {
   const response = await fetch(`${base}/api/sessions`)
   assert.equal(response.status, 200)
+  assert.equal(response.headers.get('connection'), 'close')
   const body = await response.json()
   assert.equal(body.items[0].title, 'Test task')
   assert.equal(body.items[0].running, true)
@@ -208,6 +211,7 @@ test('streams a snapshot, deltas, and a completion flash', async () => {
   try {
     const response = await fetch(`${base}/api/stream?sessionId=session-test`, { signal: controller.signal })
     assert.equal(response.status, 200)
+    assert.equal(response.headers.get('connection'), 'keep-alive')
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let body = ''
@@ -221,6 +225,43 @@ test('streams a snapshot, deltas, and a completion flash', async () => {
     assert.match(body, /"t":"jobs"/)
     assert.match(body, /"t":"job-output"/)
     assert.match(body, /"t":"flash"/)
+    assert.doesNotMatch(body, /"sessionId"/)
+  } finally {
+    controller.abort()
+  }
+})
+
+test('multiplexes several sessions over one SSE and tags every frame', async () => {
+  const controller = new AbortController()
+  try {
+    const response = await fetch(`${base}/api/stream?sessionId=session-test&sessionId=session-second`, { signal: controller.signal })
+    assert.equal(response.status, 200)
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let body = ''
+    for (let reads = 0; reads < 200; reads += 1) {
+      const { value, done } = await reader.read()
+      if (done) break
+      body += decoder.decode(value, { stream: true })
+      if (body.includes('"sessionId":"session-test"') && body.includes('"sessionId":"session-second"') && body.includes('"t":"flash"')) break
+    }
+    assert.match(body, /"sessionId":"session-test"/)
+    assert.match(body, /"sessionId":"session-second"/)
+    assert.match(body, /"t":"snapshot"/)
+    assert.match(body, /"t":"delta"/)
+    assert.match(body, /"t":"jobs"/)
+    assert.match(body, /"t":"job-output"/)
+    assert.match(body, /"t":"flash"/)
+    const frames = body.split('\n')
+      .filter((line) => line.startsWith('data: '))
+      .flatMap((line) => {
+        try { return [JSON.parse(line.slice(6))] } catch { return [] }
+      })
+    assert.ok(frames.length > 0)
+    for (const frame of frames) {
+      assert.ok(frame.sessionId === 'session-test' || frame.sessionId === 'session-second')
+    }
+    assert.ok(frames.filter((frame) => frame.t === 'snapshot').length >= 2)
   } finally {
     controller.abort()
   }

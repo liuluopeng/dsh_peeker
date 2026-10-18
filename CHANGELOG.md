@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.1 — 2026-10-18
+
+- Multiplex every active pane over one SSE connection. The server tags each session's transcript and job frames with `sessionId`; the page routes them and reconnects only when the visible pane set changes. This fixes a second pane staying on `连接中` when a mobile browser queued its extra EventSource.
+- Close JSON and HTML sockets with `Connection: close`, leaving the pane stream as the only long-lived browser connection.
+
 ## 0.5.0 — 2026-10-18
 
 - Widen the official DSH conversation column by injecting `--dsh-chat-content-width` and `--dsh-composer-card-max-width` overrides. Defaults to 1200px; configure with `contentWidth` (0 keeps the official adaptive width and drag handles).

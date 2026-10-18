@@ -176,6 +176,9 @@
   const panes = new Map()
   let syncing = false
   let toastTimer = 0
+  let streamSource = null
+  let streamKey = ''
+  let streamOpen = false
 
   const el = (tag, className, text) => {
     const node = document.createElement(tag)
@@ -460,35 +463,72 @@
     if (navigator.vibrate && navigator.userActivation?.hasBeenActive) navigator.vibrate([120, 80, 120, 80, 120])
   }
 
-  function closePaneStream(pane) {
-    if (pane.source !== null) {
-      pane.source.close()
-      pane.source = null
+  function closeSharedStream() {
+    if (streamSource !== null) {
+      streamSource.close()
+      streamSource = null
+    }
+    streamKey = ''
+    streamOpen = false
+  }
+
+  /**
+   * One EventSource for every visible pane. Reconnecting only when the visible
+   * session set changes keeps the phone below its per-origin connection limit:
+   * the old socket is closed before the replacement opens, so even a browser
+   * that allows a single connection per host can switch sessions.
+   */
+  function openSharedStream(force = false) {
+    const ids = [...panes.keys()].filter((id) => id !== '').sort()
+    if (ids.length === 0) {
+      closeSharedStream()
+      return
+    }
+    const key = ids.join('\n')
+    if (!force && streamSource !== null && streamKey === key) return
+    closeSharedStream()
+    streamKey = key
+    for (const pane of panes.values()) {
+      if (pane.snapshot !== true) pane.streamState = 'connecting'
+      paintPane(pane)
+    }
+    const query = ids.map((id) => `sessionId=${encodeURIComponent(id)}`).join('&')
+    const source = new EventSource(`/api/stream?${query}`)
+    streamSource = source
+    source.onopen = () => {
+      if (streamSource !== source) return
+      streamOpen = true
+      for (const pane of panes.values()) {
+        pane.streamState = 'open'
+        paintPane(pane)
+      }
+    }
+    source.onerror = () => {
+      if (streamSource !== source) return
+      streamOpen = false
+      for (const pane of panes.values()) {
+        pane.streamState = 'error'
+        paintPane(pane)
+      }
+    }
+    source.onmessage = (message) => {
+      if (streamSource !== source) return
+      try {
+        dispatchFrame(JSON.parse(message.data))
+      } catch { /* ignore a malformed frame */ }
     }
   }
 
-  function openPaneStream(pane) {
-    closePaneStream(pane)
-    pane.streamState = 'connecting'
-    paintPane(pane)
-    const source = new EventSource(`/api/stream?sessionId=${encodeURIComponent(pane.id)}`)
-    pane.source = source
-    source.onopen = () => {
-      if (pane.source !== source) return
-      pane.streamState = 'open'
-      paintPane(pane)
+  /** Route one multiplexed frame to its pane; single-session frames stay untagged. */
+  function dispatchFrame(payload) {
+    if (!payload || typeof payload !== 'object') return
+    const id = typeof payload.sessionId === 'string' ? payload.sessionId : null
+    if (id !== null) {
+      const pane = panes.get(id)
+      if (pane !== undefined) handlePane(pane, payload)
+      return
     }
-    source.onerror = () => {
-      if (pane.source !== source) return
-      pane.streamState = 'error'
-      paintPane(pane)
-    }
-    source.onmessage = (message) => {
-      if (pane.source !== source) return
-      try {
-        handlePane(pane, JSON.parse(message.data))
-      } catch { /* ignore a malformed frame */ }
-    }
+    if (panes.size === 1) handlePane([...panes.values()][0], payload)
   }
 
   function upsertJob(pane, job) {
@@ -648,9 +688,11 @@
       return
     }
     if (payload.t === 'end') {
-      pane.streamState = 'ended'
-      closePaneStream(pane)
-      paintPane(pane)
+      for (const current of panes.values()) {
+        current.streamState = 'ended'
+        paintPane(current)
+      }
+      closeSharedStream()
       return
     }
     if (payload.t === 'error') {
@@ -679,20 +721,18 @@
     panesEl.append(root)
     const pane = {
       id: session.sessionId, title: session.title || session.sessionId, updatedAt: Number(session.updatedAt) || 0,
-      running: session.running === true, completedAt: 0, streamState: 'connecting',
-      items: [], live: null, liveNode: null, snapshot: false, source: null,
+      running: session.running === true, completedAt: 0, streamState: streamOpen ? 'open' : 'connecting',
+      items: [], live: null, liveNode: null, snapshot: false,
       startedAt: 0, jobs: new Map(), jobsEl, elapsedEl: elapsed,
       root, titleEl: title, dotEl: dot, statusEl: status, body,
     }
     panes.set(pane.id, pane)
     paintPane(pane)
-    openPaneStream(pane)
     updateLayout()
     return pane
   }
 
   function removePane(pane) {
-    closePaneStream(pane)
     pane.root.remove()
     panes.delete(pane.id)
     updateLayout()
@@ -710,6 +750,7 @@
         .filter((session) => session.running === true)
         .sort((left, right) => (Number(right.updatedAt) || 0) - (Number(left.updatedAt) || 0))
       const activeIds = new Set(active.map((session) => session.sessionId))
+      let needReopen = false
 
       for (const pane of panes.values()) {
         const session = sessions.find((candidate) => candidate.sessionId === pane.id)
@@ -722,7 +763,7 @@
             pane.running = true
             pane.completedAt = 0
           }
-          if (pane.streamState === 'ended') openPaneStream(pane)
+          if (pane.streamState === 'ended') needReopen = true
         } else if (pane.running) {
           pane.running = false
           pane.completedAt = Date.now()
@@ -743,6 +784,7 @@
         if (!activeIds.has(pane.id)) removePane(pane)
       }
 
+      openSharedStream(needReopen)
       updateLayout()
       const shown = panes.size
       const extra = active.length > MAX_PANES ? ' · 显示前 4 个' : ''
