@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.12 — 2026-10-18
+
+- Add a muted canvas-video keep-awake fallback for browsers that deny Screen Wake Lock. A no-input page is often refused the Wake Lock API; the playing video keeps Android's screen awake so the browser does not suspend the page. A suspended page buffered the whole stream and applied it only at turn end, which looked like "no messages" and a completion flash about a minute late.
+- Show the keep-awake state in the footer: `屏幕常亮` (Wake Lock), `视频常亮` (video fallback), or `屏幕可能休眠` (both refused). If the last state appears, set the phone's screen timeout longer or keep the page in the foreground while testing.
+
 ## 0.5.11 — 2026-10-18
 
 - Forward the follow snapshot's `assistantStream` baseline and hydrate the in-progress assistant text/reasoning from it. A stream reconnect or a page load in the middle of an answer now restores the partial response instead of resetting the transcript to the durable records and showing nothing until the final message. This is the missing piece behind the phone showing a few seconds of text and then appearing empty after a reconnect.

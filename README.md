@@ -9,6 +9,7 @@ A deliberately small, read-only, **light** LAN view of the active DSH sessions.
 - Every pane shows only its newest page and stays pinned to its tail. The transcript, job band, and tool output are paged programmatically; the reader cannot scroll them and no scrollbar is rendered.
 - Streams live background-job output (running commands) from the Host's `jobController`, with a spinner and elapsed time; running tool calls show the same indicator.
 - All visible panes share one SSE connection; every frame carries its `sessionId`. This avoids the mobile per-origin connection limit that left a second pane stuck on `连接中`.
+- The footer shows the keep-awake state (`屏幕常亮` / `视频常亮` / `屏幕可能休眠`). When Screen Wake Lock is denied — common for a no-input page — a tiny muted canvas video plays in the background to keep Android's screen awake, so the browser does not suspend the page and buffer updates until the screen wakes.
 - The server sends a data heartbeat every 15 seconds; a visible page that sees no frame for 30 seconds reopens the stream and refreshes its snapshot. This recovers immediately after a phone suspends the tab or socket, and the no-input page retries Screen Wake Lock on load, visibility changes, and every 30 seconds.
 - The peek page's default text size is 15px; the pane header shows a moving activity bar and elapsed time while a turn runs.
 - Layout follows the viewport orientation:

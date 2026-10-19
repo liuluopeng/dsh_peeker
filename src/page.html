@@ -158,7 +158,7 @@
   </div>
 </header>
 <main id="panes" data-count="0"></main>
-<footer><span>只读 · 无输入 · 局域网可见</span><span id="meta">活跃 0 · 显示 0</span><span id="orientation">竖屏</span><span id="clock"></span></footer>
+<footer><span>只读 · 无输入 · 局域网可见</span><span id="meta">活跃 0 · 显示 0</span><span id="orientation">竖屏</span><span id="wake">常亮…</span><span id="clock"></span></footer>
 <div id="flash"></div>
 <script>
 (() => {
@@ -977,13 +977,103 @@
   }
 
   let wakeLock = null
-  const keepAwake = async () => {
-    try {
-      if (navigator.wakeLock && document.visibilityState === 'visible' && wakeLock === null) {
-        wakeLock = await navigator.wakeLock.request('screen')
-        wakeLock.addEventListener('release', () => { wakeLock = null })
+  let wakeVideo = null
+  let wakeVideoStream = null
+  let wakeVideoTimer = 0
+
+  function setWakeState(text) {
+    const node = document.getElementById('wake')
+    if (node !== null) node.textContent = text
+  }
+
+  function stopWakeVideo() {
+    if (wakeVideoTimer !== 0) {
+      clearInterval(wakeVideoTimer)
+      wakeVideoTimer = 0
+    }
+    if (wakeVideo !== null) {
+      try { wakeVideo.pause() } catch { /* already gone */ }
+      wakeVideo.srcObject = null
+      wakeVideo.remove()
+      wakeVideo = null
+    }
+    if (wakeVideoStream !== null) {
+      for (const track of wakeVideoStream.getTracks()) {
+        try { track.stop() } catch { /* already gone */ }
       }
-    } catch { wakeLock = null /* unsupported or refused */ }
+      wakeVideoStream = null
+    }
+  }
+
+  /**
+   * Screen Wake Lock needs a user gesture on some browsers; this page has no
+   * input. Fall back to a tiny muted canvas video, which keeps Android's screen
+   * awake while it plays. A phone that locks suspends this page and only shows
+   * the buffered frames when it wakes, which looks like a one-minute delay.
+   */
+  async function startWakeVideo() {
+    if (wakeVideo !== null || typeof HTMLCanvasElement === 'undefined') return
+    if (typeof HTMLCanvasElement.prototype.captureStream !== 'function') {
+      setWakeState('屏幕可能休眠')
+      return
+    }
+    const canvas = document.createElement('canvas')
+    canvas.width = 320
+    canvas.height = 180
+    const context = canvas.getContext('2d')
+    if (context === null) {
+      setWakeState('屏幕可能休眠')
+      return
+    }
+    const draw = () => {
+      context.fillStyle = '#000'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      context.fillStyle = '#fff'
+      context.font = '14px monospace'
+      context.fillText(new Date().toISOString(), 8, 24)
+    }
+    draw()
+    let stream
+    try { stream = canvas.captureStream(1) } catch { setWakeState('屏幕可能休眠'); return }
+    const video = document.createElement('video')
+    video.muted = true
+    video.playsInline = true
+    video.autoplay = true
+    video.loop = true
+    video.setAttribute('aria-hidden', 'true')
+    video.style.cssText = 'position:fixed;left:-8px;top:-8px;width:2px;height:2px;opacity:0.01;pointer-events:none'
+    video.srcObject = stream
+    document.body.append(video)
+    try {
+      await video.play()
+      wakeVideo = video
+      wakeVideoStream = stream
+      wakeVideoTimer = setInterval(draw, 1000)
+      setWakeState('视频常亮')
+    } catch {
+      video.remove()
+      for (const track of stream.getTracks()) {
+        try { track.stop() } catch { /* already gone */ }
+      }
+      setWakeState('屏幕可能休眠')
+    }
+  }
+
+  const keepAwake = async () => {
+    if (document.visibilityState !== 'visible') return
+    if (wakeLock === null && navigator.wakeLock) {
+      try {
+        wakeLock = await navigator.wakeLock.request('screen')
+        wakeLock.addEventListener('release', () => {
+          wakeLock = null
+          setWakeState('屏幕可能休眠')
+        })
+        stopWakeVideo()
+        setWakeState('屏幕常亮')
+        return
+      } catch { wakeLock = null /* unsupported or refused */ }
+    }
+    if (wakeLock === null) void startWakeVideo()
   }
   // Wake Lock normally asks for a user gesture; the page deliberately has none,
   // so retry on load, on every visibility change, and every 30 seconds.
