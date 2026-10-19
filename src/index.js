@@ -7,9 +7,9 @@
  * event arrives.
  *
  * It also contributes one host-side stylesheet to every DSH index page: larger
- * font variables and, when configured, a fixed width for the official
- * conversation column. The injected rules are plain CSS, so they survive in the
- * official desktop app without patching its bundle.
+ * font variables, a taller composer, and, when configured, a fixed width for
+ * the official conversation column. The injected rules are plain CSS, so they
+ * survive in the official desktop app without patching its bundle.
  */
 
 import { readFileSync } from 'node:fs'
@@ -179,7 +179,7 @@ function lanAddresses() {
 /**
  * Mount the listener.
  * @param {import('@deepseek-ai/cordis').Context} ctx
- * @param {{ port?: number, fontSize?: number, codeFontSize?: number, terminalFontSize?: number, contentWidth?: number | 'fill' } | undefined} config
+ * @param {{ port?: number, fontSize?: number, codeFontSize?: number, terminalFontSize?: number, contentWidth?: number | 'fill', composerHeight?: number } | undefined} config
  */
 export function apply(ctx, config) {
   const port = Number(config?.port ?? 3082)
@@ -198,6 +198,10 @@ export function apply(ctx, config) {
   const contentWidth = rawContentWidth === 'fill' ? FILL_WIDTH : Number(rawContentWidth)
   if (rawContentWidth !== 'fill' && (!Number.isInteger(contentWidth) || (contentWidth !== 0 && (contentWidth < 640 || contentWidth > 2400)))) {
     throw new Error(`lx_dsh_peek: contentWidth must be 'fill', 0 (official width), or an integer from 640 to 2400, got ${JSON.stringify(config?.contentWidth)}`)
+  }
+  const composerHeight = Number(config?.composerHeight ?? 200)
+  if (!Number.isInteger(composerHeight) || (composerHeight !== 0 && (composerHeight < 80 || composerHeight > 600))) {
+    throw new Error(`lx_dsh_peek: composerHeight must be 0 (official height) or an integer from 80 to 600, got ${JSON.stringify(config?.composerHeight)}`)
   }
   const fontStyle = `:root, body {
   --dsh-content-font-size: ${fontSize}px !important;
@@ -222,7 +226,19 @@ export function apply(ctx, config) {
 [data-conversation-content] [data-width-handle] {
   display: none !important;
 }`
-  const injectedStyle = `${fontStyle}${widthStyle}`
+  // Stable data attributes on the official composer. The hero state has a
+  // more specific `.…_hero .…_input { min-height: 52px }` rule, so the
+  // min-height needs !important. The scroll container inherits the max-height
+  // custom property from the card, which lets a long draft scroll only after
+  // the taller box is filled.
+  const composerStyle = composerHeight === 0 ? '' : `
+[data-composer-input="true"] {
+  min-height: ${composerHeight}px !important;
+}
+[data-composer-card="true"] {
+  --dsh-composer-text-max-height: ${Math.max(360, composerHeight + 160)}px !important;
+}`
+  const injectedStyle = `${fontStyle}${widthStyle}${composerStyle}`
 
   const page = readFileSync(new URL('./page.html', import.meta.url), 'utf8')
   /** @type {Set<{ controller: AbortController, res: import('node:http').ServerResponse }>} */

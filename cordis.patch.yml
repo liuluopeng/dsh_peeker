@@ -13,3 +13,6 @@
         fontSize: 34
         codeFontSize: 24
         terminalFontSize: 24
+        # Taller official input box in px; 0 keeps the official height. The
+        # scroll area starts scrolling after composerHeight + 160px.
+        composerHeight: 200

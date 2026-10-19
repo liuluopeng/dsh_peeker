@@ -197,7 +197,7 @@ test('serves the light single-page peek UI', async () => {
   assert.match(body, /font: 15px/)
 })
 
-test('injects the official UI font and conversation-width overrides', () => {
+test('injects the official UI font, taller composer, and conversation-width overrides', () => {
   const table = []
   for (const entry of listeners) {
     if (entry.event === 'webserver/index-inject') entry.listener(table)
@@ -211,6 +211,14 @@ test('injects the official UI font and conversation-width overrides', () => {
   assert.match(table[0].text, /\[data-conversation-content\] \{\s*--dsh-chat-content-width: 10000px !important/)
   assert.match(table[0].text, /--dsh-composer-card-max-width: 10032px !important/)
   assert.match(table[0].text, /\[data-width-handle\] \{\s*display: none !important/)
+  assert.match(table[0].text, /\[data-composer-input="true"\] \{\s*min-height: 200px !important/)
+  assert.match(table[0].text, /--dsh-composer-text-max-height: 360px !important/)
+})
+
+test('rejects an invalid composer height', () => {
+  assert.throws(() => apply({}, { port, composerHeight: 40 }), /composerHeight/)
+  assert.throws(() => apply({}, { port, composerHeight: 601 }), /composerHeight/)
+  assert.throws(() => apply({}, { port, composerHeight: 1.5 }), /composerHeight/)
 })
 
 test('rejects an invalid conversation width', () => {

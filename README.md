@@ -19,7 +19,7 @@ A deliberately small, read-only, **light** LAN view of the active DSH sessions.
   - 4 panes use a 2×2 grid in both orientations;
   - more than 4 active tasks keeps the first 4 and shows `显示前 4 个`.
 - A live `turn/end` destroys that task's pane immediately and flashes the whole background black/white at one-second intervals for three black phases (six phases total), then hides. It vibrates when the browser allows it. There is no persistent `任务结束` banner.
-- The same host plugin can enlarge the official DSH UI's fonts and widen its conversation column from `cordis.patch.yml`, without a patched DMG.
+- The same host plugin can enlarge the official DSH UI's fonts, widen its conversation column, and raise its composer height from `cordis.patch.yml`, without a patched DMG.
 
 ## Install
 
@@ -102,6 +102,9 @@ Set the actual sizes and width in `cordis.patch.yml`:
         fontSize: 34
         codeFontSize: 24
         terminalFontSize: 24
+        # px min-height of the official input box; 0 keeps the official height.
+        # The scroll area starts scrolling after composerHeight + 160px.
+        composerHeight: 200
 ```
 
 The width has no official Settings row. The font Settings row still displays the official maximum (22/16/20); change the plugin config, not the Settings row. Keep the profile's `ui-theme` values within the official schema (22/16/20) so the theme plugin validates; the override supplies the larger rendered sizes.
@@ -116,6 +119,8 @@ For a package installed from GitHub, do not edit files under `node_modules`. Put
     fontSize: 34
     codeFontSize: 24
     terminalFontSize: 24
+    # px min-height of the official input box; 0 keeps the official height.
+    composerHeight: 200
 ```
 
 ## Open
@@ -155,6 +160,9 @@ Change the port, conversation width, or font sizes in `cordis.patch.yml`:
         fontSize: 34
         codeFontSize: 24
         terminalFontSize: 24
+        # px min-height of the official input box; 0 keeps the official height.
+        # The scroll area starts scrolling after composerHeight + 160px.
+        composerHeight: 200
 ```
 
 ## Development

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1 — 2026-10-19
+
+- Add `composerHeight` (default 200, range 80–600, `0` disables) to the official-UI stylesheet. It targets the stable `[data-composer-input="true"]` and `[data-composer-card="true"]` attributes, sets the input's min-height, and raises the scroll cap to `composerHeight + 160px`. Verified on the official Desktop UI: the empty composer input grows from 52px to 200px and the card from 114px to 262px.
+
 ## 0.6.0 — 2026-10-18
 
 - Move the initial transcript to `GET /api/bootstrap`, an ordinary JSON response. The shared SSE now carries only live events/deltas, a `ready` frame, and heartbeats; it no longer writes a large initial snapshot. Mobile networks and proxies can buffer a one-shot SSE response until more data arrives, which is why the first pane could sit on `运行中` with no messages.
