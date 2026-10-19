@@ -19,7 +19,7 @@ A deliberately small, read-only, **light** LAN view of the active DSH sessions.
   - 4 panes use a 2×2 grid in both orientations;
   - more than 4 active tasks keeps the first 4 and shows `显示前 4 个`.
 - A live `turn/end` destroys that task's pane immediately and flashes the whole background black/white at one-second intervals for three black phases (six phases total), then hides. It vibrates when the browser allows it. There is no persistent `任务结束` banner.
-- The same host plugin can enlarge the official DSH UI's fonts, set the right-sidebar split (default 40%), and raise its composer height from `cordis.patch.yml`, without a patched DMG.
+- The same host plugin can enlarge the official DSH UI's fonts, widen its conversation column, and raise its composer height from `cordis.patch.yml`, without a patched DMG.
 
 ## Install
 
@@ -69,7 +69,7 @@ The same host plugin can enlarge and widen the **official** DSH UI. It listens t
 
 The official theme writes its font variables to `body` as normal inline styles; the `!important` stylesheet rule wins, so the rendered UI uses these values even though the official Settings schema still caps the text row at 22px (code 16, terminal 20).
 
-By default `contentWidth: fill` makes the conversation content use the whole center pane. The panes themselves are split by `rightbarRatio` (below): `0` keeps the official width:
+By default `contentWidth: fill` makes the conversation content use the whole center pane; `0` keeps the official width:
 
 ```css
 :root, body {
@@ -85,14 +85,6 @@ By default `contentWidth: fill` makes the conversation content use the whole cen
 ```
 
 `contentWidth: fill` injects a cap above any real viewport, so the official `width: 100%` rules let the transcript, assistant/user text, wide tables, and composer consume the entire center pane. Set `contentWidth` to an integer from 640 to 2400 for a centered fixed measure, `0` to keep the official width and its drag handles, or `fill` for the whole pane. Any nonzero number hides the handles because the pinned width ignores their preference.
-
-### Right sidebar split
-
-DSH stores the right sidebar (terminal/editor) width as a px preference. It initializes at 45% of the frame only the first time it opens; if it was first opened in a narrow window, that small px value stays after the window grows. The plugin injects a small official-UI script and CSS variables that set the shell grid track and the `[data-side="rightbar"]` handle directly: `--lx-rightbar-width` is the target width, and the startup ratio (default `0.4`) is applied even if the host ignores synthetic pointer events. At 2044px this gives approximately 280px sidebar + 950px conversation + 814px right terminal, matching the screenshot.
-
-The script runs when the right sidebar is open and re-applies after it is closed and reopened. Drag the divider and the CSS variable updates live; releasing stores the ratio in `localStorage` under `lx-dsh-peek.rightbar-ratio` and it is applied on future loads. `rightbarRatio` is only the initial default when no stored ratio exists. Set `rightbarRatio: 0` to disable the script, or clear that localStorage key to reset to the configured default. It does not change the content width: keep `contentWidth: fill` to remove the centered side margins inside the conversation pane.
-
-A plugin update only changes the HTML served on the next page load. If the right sidebar still looks unchanged, fully quit and reopen `DeepSeek Harness.app` (or reload the window) so the new index script is loaded; an already-open window keeps the old HTML.
 
 The conversation still cannot exceed the center pane. On desktop the left sidebar occupies 264–420px and an open right sidebar starts at 300px, so collapse the right sidebar with `⌘⌥B` and the left sidebar with `⌘B` (macOS desktop), or drag them narrower, to give the text more room.
 
@@ -113,9 +105,6 @@ Set the actual sizes and width in `cordis.patch.yml`:
         # px min-height of the official input box; 0 keeps the official height.
         # The scroll area starts scrolling after composerHeight + 160px.
         composerHeight: 200
-        # right sidebar (terminal/editor) width as a fraction of the frame;
-        # 0.4 gives the conversation pane about 46% on a wide window; 0 disables.
-        rightbarRatio: 0.4
 ```
 
 The width has no official Settings row. The font Settings row still displays the official maximum (22/16/20); change the plugin config, not the Settings row. Keep the profile's `ui-theme` values within the official schema (22/16/20) so the theme plugin validates; the override supplies the larger rendered sizes.
@@ -132,8 +121,6 @@ For a package installed from GitHub, do not edit files under `node_modules`. Put
     terminalFontSize: 24
     # px min-height of the official input box; 0 keeps the official height.
     composerHeight: 200
-    # right sidebar (terminal/editor) width as a fraction of the frame.
-    rightbarRatio: 0.4
 ```
 
 ## Open
@@ -176,9 +163,6 @@ Change the port, conversation width, or font sizes in `cordis.patch.yml`:
         # px min-height of the official input box; 0 keeps the official height.
         # The scroll area starts scrolling after composerHeight + 160px.
         composerHeight: 200
-        # right sidebar (terminal/editor) width as a fraction of the frame;
-        # 0.4 gives the conversation pane about 46% on a wide window; 0 disables.
-        rightbarRatio: 0.4
 ```
 
 ## Development

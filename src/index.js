@@ -179,7 +179,7 @@ function lanAddresses() {
 /**
  * Mount the listener.
  * @param {import('@deepseek-ai/cordis').Context} ctx
- * @param {{ port?: number, fontSize?: number, codeFontSize?: number, terminalFontSize?: number, contentWidth?: number | 'fill', composerHeight?: number, rightbarRatio?: number } | undefined} config
+ * @param {{ port?: number, fontSize?: number, codeFontSize?: number, terminalFontSize?: number, contentWidth?: number | 'fill', composerHeight?: number } | undefined} config
  */
 export function apply(ctx, config) {
   const port = Number(config?.port ?? 3082)
@@ -202,10 +202,6 @@ export function apply(ctx, config) {
   const composerHeight = Number(config?.composerHeight ?? 200)
   if (!Number.isInteger(composerHeight) || (composerHeight !== 0 && (composerHeight < 80 || composerHeight > 600))) {
     throw new Error(`lx_dsh_peek: composerHeight must be 0 (official height) or an integer from 80 to 600, got ${JSON.stringify(config?.composerHeight)}`)
-  }
-  const rightbarRatio = Number(config?.rightbarRatio ?? 0.4)
-  if (!Number.isFinite(rightbarRatio) || (rightbarRatio !== 0 && (rightbarRatio < 0.25 || rightbarRatio > 0.65))) {
-    throw new Error(`lx_dsh_peek: rightbarRatio must be 0 (disabled) or a number from 0.25 to 0.65, got ${JSON.stringify(config?.rightbarRatio)}`)
   }
   const fontStyle = `:root, body {
   --dsh-content-font-size: ${fontSize}px !important;
@@ -242,87 +238,7 @@ export function apply(ctx, config) {
 [data-composer-card="true"] {
   --dsh-composer-text-max-height: ${Math.max(360, composerHeight + 160)}px !important;
 }`
-  // The right sidebar is a grid track in the official shell. Drive the track
-  // and its drag handle from CSS variables so the remembered ratio applies even
-  // when synthetic pointer events are ignored by the host page. The script
-  // below updates the variables while the user drags.
-  const rightbarStyle = `
-[data-lx-rightbar-frame] {
-  grid-template-columns: var(--lx-sidebar-width, 280px) minmax(400px, 1fr) var(--lx-rightbar-width, 40%) !important;
-}
-[data-lx-rightbar-frame] [data-side="rightbar"] {
-  left: calc(100% - var(--lx-rightbar-width)) !important;
-}`
-  const injectedStyle = `${fontStyle}${widthStyle}${composerStyle}${rightbarStyle}`
-
-  // The right sidebar (terminal/editor) width is a px preference in a client
-  // store, not a CSS variable. Set it with the same gesture a user would use:
-  // drag the rightbar handle once after the page loads. This keeps the official
-  // resize math, the store, and the handle in sync.
-  const rightbarScript = rightbarRatio === 0 ? '' : `(() => {
-  const key = 'lx-dsh-peek.rightbar-ratio';
-  let stored = 0;
-  try { stored = Number(localStorage.getItem(key)); } catch { stored = 0; }
-  let ratio = Number.isFinite(stored) && stored >= 0.25 && stored <= 0.65 ? stored : ${rightbarRatio};
-  let dragging = false;
-  let tagged = null;
-  const root = document.documentElement;
-  const handleOf = (event) => {
-    const target = event.target;
-    return target instanceof Element ? target.closest('[data-side="rightbar"]') : null;
-  };
-  const frameOf = () => {
-    const handle = document.querySelector('[data-side="rightbar"]');
-    if (handle === null) return null;
-    const frame = handle.closest('._6Qf49G_frame') ?? handle.parentElement;
-    if (frame === null || frame.hasAttribute('data-rightbar-collapsed')) return null;
-    return { frame, handle };
-  };
-  const apply = () => {
-    const found = frameOf();
-    if (found === null) {
-      if (tagged !== null) tagged.removeAttribute('data-lx-rightbar-frame');
-      tagged = null;
-      root.removeAttribute('data-lx-rightbar');
-      return;
-    }
-    const frame = found.frame;
-    if (tagged !== null && tagged !== frame) tagged.removeAttribute('data-lx-rightbar-frame');
-    tagged = frame;
-    const rect = frame.getBoundingClientRect();
-    if (rect.width < 1024) { frame.removeAttribute('data-lx-rightbar-frame'); root.removeAttribute('data-lx-rightbar'); return; }
-    const inline = frame.style.gridTemplateColumns || getComputedStyle(frame).gridTemplateColumns;
-    frame.style.setProperty('--lx-sidebar-width', inline.split(' ')[0] || '280px');
-    if (!dragging) frame.style.setProperty('--lx-rightbar-width', Math.round(rect.width * ratio) + 'px');
-    frame.setAttribute('data-lx-rightbar-frame', '');
-    root.setAttribute('data-lx-rightbar', '');
-  };
-  const setFromPointer = (event) => {
-    const found = frameOf();
-    if (found === null) return;
-    const rect = found.frame.getBoundingClientRect();
-    const next = (rect.right - event.clientX) / rect.width;
-    if (next < 0.25 || next > 0.65) return;
-    ratio = next;
-    found.frame.style.setProperty('--lx-rightbar-width', Math.round(rect.width * ratio) + 'px');
-  };
-  document.addEventListener('pointerdown', (event) => {
-    if (handleOf(event) !== null) { dragging = true; apply(); }
-  }, true);
-  document.addEventListener('pointermove', (event) => {
-    if (dragging) setFromPointer(event);
-  }, true);
-  document.addEventListener('pointerup', (event) => {
-    if (!dragging) return;
-    dragging = false;
-    setFromPointer(event);
-    try { localStorage.setItem(key, String(ratio)); } catch { /* private mode */ }
-    apply();
-  }, true);
-  apply();
-  setInterval(apply, 1000);
-  window.addEventListener('resize', apply);
-})()`
+  const injectedStyle = `${fontStyle}${widthStyle}${composerStyle}`
 
   const page = readFileSync(new URL('./page.html', import.meta.url), 'utf8')
   /** @type {Set<{ controller: AbortController, res: import('node:http').ServerResponse }>} */
@@ -332,7 +248,6 @@ export function apply(ctx, config) {
   ctx.effect(() => {
     const off = ctx.on('webserver/index-inject', (table) => {
       table.push({ kind: 'style', text: injectedStyle })
-      if (rightbarScript !== '') table.push({ kind: 'script', text: rightbarScript, placement: 'body' })
     })
     return () => { if (typeof off === 'function') off() }
   }, 'lx-dsh-peek:official-ui-overrides')

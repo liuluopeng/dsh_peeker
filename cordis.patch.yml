@@ -16,6 +16,3 @@
         # Taller official input box in px; 0 keeps the official height. The
         # scroll area starts scrolling after composerHeight + 160px.
         composerHeight: 200
-        # Right sidebar (terminal/editor) width as a fraction of the frame.
-        # 0.4 leaves the conversation pane about 46% on a wide window; 0 disables.
-        rightbarRatio: 0.4

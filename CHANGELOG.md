@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.8 — 2026-10-19
+
+- Roll back the right-sidebar split experiments at the user's request. Removed `rightbarRatio`, the injected rightbar CSS/script, the remembered-ratio localStorage key handling, and the frame tagging. DSH's own right-sidebar width is left untouched, so the conversation content stays `contentWidth: fill` and the text column remains full. Composer height, HTTP bootstrap, terminal mode, and all peek fixes remain.
+
 ## 0.6.7 — 2026-10-19
 
 - Resolve the actual shell frame with `handle.closest('._6Qf49G_frame')` and set `--lx-sidebar-width` / `--lx-rightbar-width` on that frame. `handle.parentElement` is not always the frame; on the live shell the variable reached a wrapper while the frame grid kept the old width. Frame-local variables plus the direct `data-lx-rightbar-frame` attribute make the grid and handle follow the remembered ratio exactly.
