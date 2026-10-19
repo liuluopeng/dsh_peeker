@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.14 — 2026-10-18
+
+- Trim snapshot transcripts to the newest 60 items before rendering. The pane is a tail-only viewport; building all 600 historical items on a phone could block the main thread and leave the pane showing only `运行中`.
+- If a running pane has no visible content after four seconds, reconnect the shared stream once automatically. This is the automatic equivalent of the manual reload that made the first session show its messages; it also covers a follow attached before the session was ready.
+
 ## 0.5.13 — 2026-10-18
 
 - Render live tool calls from `tool-call-delta` frames and hydrate them from the `assistantStream` baseline. A turn that starts with a tool call now shows the tool name and arguments immediately instead of an empty pane; reasoning that ends where a tool call begins is followed by the action row, so it no longer looks cut off. `tool/call` events merge into the live row by call id instead of creating a duplicate.

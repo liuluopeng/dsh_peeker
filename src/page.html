@@ -163,6 +163,10 @@
 <script>
 (() => {
   const MAX_PANES = 4
+  // The pane is a tail-only viewport. Keeping every historical item made a
+  // phone spend seconds building a 600-item snapshot; 60 is far more than the
+  // visible page and keeps the initial render bounded.
+  const MAX_RENDER_ITEMS = 60
   const POLL_MS = 3000
   const JOB_KEEP_MS = 12000
   const JOB_OUTPUT_LIMIT = 12000
@@ -323,7 +327,30 @@
     return article
   }
 
+  function trimItems(pane) {
+    if (pane.items.length <= MAX_RENDER_ITEMS) return
+    pane.items = pane.items.slice(-MAX_RENDER_ITEMS)
+    if (pane.live !== null && !pane.items.includes(pane.live)) pane.live = null
+    if (pane.liveTool !== null && !pane.items.includes(pane.liveTool.item)) {
+      pane.liveTool = null
+      pane.liveToolNode = null
+    }
+  }
+
+  function paneHasContent(pane) {
+    return pane.items.some((item) => {
+      if (item.kind === 'user' || item.kind === 'assistant') {
+        return Boolean((item.text || '').trim() || (item.reasoning || '').trim())
+      }
+      if (item.kind === 'tool') {
+        return Boolean(item.name || item.callId || (item.args || '').trim() || item.result !== null)
+      }
+      return false
+    })
+  }
+
   function renderPane(pane) {
+    trimItems(pane)
     pane.body.textContent = ''
     pane.liveNode = null
     pane.liveToolNode = null
@@ -923,6 +950,7 @@
       parentSessionId: typeof session.parentSessionId === 'string' ? session.parentSessionId : '',
       running: session.running === true, streamState: streamOpen ? 'open' : 'connecting',
       items: [], live: null, liveNode: null, liveTool: null, liveToolNode: null, snapshot: false,
+      createdAt: Date.now(), reopenedEmpty: false,
       startedAt: 0, jobs: new Map(), jobsEl, elapsedEl: elapsed,
       root, titleEl: title, dotEl: dot, statusEl: status, body,
     }
@@ -1039,6 +1067,17 @@
       // Re-pin every second as well: job bands, font metric changes, or a late
       // image load can move the tail without a transcript event.
       scrollPane(pane)
+    }
+    // A newly created pane that is still running but has rendered nothing after
+    // four seconds may have attached its follow before the session was ready.
+    // Reconnect once; this is the automatic equivalent of the manual reload that
+    // made the first session show its messages.
+    for (const pane of panes.values()) {
+      if (pane.running && !paneHasContent(pane) && !pane.reopenedEmpty && now - pane.createdAt > 4000) {
+        pane.reopenedEmpty = true
+        openSharedStream(true)
+        break
+      }
     }
     ensureStreamFresh()
     clockEl.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
