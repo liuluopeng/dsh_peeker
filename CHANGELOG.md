@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.3 — 2026-10-19
+
+- Revert the default `contentWidth` to `fill`. The centered 920px column was the wrong interpretation: it removed the side margins only by shrinking the text inside a still-wide pane.
+- Add `rightbarRatio` (default `0.4`, range `0.25–0.65`, `0` disables). DSH stores the right sidebar width as a px preference and initializes it at 45% only on first open, so a panel first opened in a narrow window stays small after the window grows. The plugin injects a small official-UI script that performs the same drag on `[data-side="rightbar"]`, setting the right sidebar to 40% of the frame. Verified at 2044px: 280px sidebar + 844px conversation + 920px rightbar → 280px + 950px + 814px. The conversation content stays `fill`, so there are no side margins inside the pane.
+
 ## 0.6.2 — 2026-10-19
 
 - Change the default `contentWidth` from `fill` to `920px`, matching the readable conversation column in the screenshot. The composer follows at 952px. `fill` is still available; `0` keeps the official width and drag handles.

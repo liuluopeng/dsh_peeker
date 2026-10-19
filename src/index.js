@@ -179,7 +179,7 @@ function lanAddresses() {
 /**
  * Mount the listener.
  * @param {import('@deepseek-ai/cordis').Context} ctx
- * @param {{ port?: number, fontSize?: number, codeFontSize?: number, terminalFontSize?: number, contentWidth?: number | 'fill', composerHeight?: number } | undefined} config
+ * @param {{ port?: number, fontSize?: number, codeFontSize?: number, terminalFontSize?: number, contentWidth?: number | 'fill', composerHeight?: number, rightbarRatio?: number } | undefined} config
  */
 export function apply(ctx, config) {
   const port = Number(config?.port ?? 3082)
@@ -194,7 +194,7 @@ export function apply(ctx, config) {
       throw new Error(`lx_dsh_peek: ${name} must be an integer from 8 to 80, got ${JSON.stringify(value)}`)
     }
   }
-  const rawContentWidth = config?.contentWidth ?? 920
+  const rawContentWidth = config?.contentWidth ?? 'fill'
   const contentWidth = rawContentWidth === 'fill' ? FILL_WIDTH : Number(rawContentWidth)
   if (rawContentWidth !== 'fill' && (!Number.isInteger(contentWidth) || (contentWidth !== 0 && (contentWidth < 640 || contentWidth > 2400)))) {
     throw new Error(`lx_dsh_peek: contentWidth must be 'fill', 0 (official width), or an integer from 640 to 2400, got ${JSON.stringify(config?.contentWidth)}`)
@@ -202,6 +202,10 @@ export function apply(ctx, config) {
   const composerHeight = Number(config?.composerHeight ?? 200)
   if (!Number.isInteger(composerHeight) || (composerHeight !== 0 && (composerHeight < 80 || composerHeight > 600))) {
     throw new Error(`lx_dsh_peek: composerHeight must be 0 (official height) or an integer from 80 to 600, got ${JSON.stringify(config?.composerHeight)}`)
+  }
+  const rightbarRatio = Number(config?.rightbarRatio ?? 0.4)
+  if (!Number.isFinite(rightbarRatio) || (rightbarRatio !== 0 && (rightbarRatio < 0.25 || rightbarRatio > 0.65))) {
+    throw new Error(`lx_dsh_peek: rightbarRatio must be 0 (disabled) or a number from 0.25 to 0.65, got ${JSON.stringify(config?.rightbarRatio)}`)
   }
   const fontStyle = `:root, body {
   --dsh-content-font-size: ${fontSize}px !important;
@@ -240,6 +244,46 @@ export function apply(ctx, config) {
 }`
   const injectedStyle = `${fontStyle}${widthStyle}${composerStyle}`
 
+  // The right sidebar (terminal/editor) width is a px preference in a client
+  // store, not a CSS variable. Set it with the same gesture a user would use:
+  // drag the rightbar handle once after the page loads. This keeps the official
+  // resize math, the store, and the handle in sync.
+  const rightbarScript = rightbarRatio === 0 ? '' : `(() => {
+  const ratio = ${rightbarRatio};
+  let applied = false;
+  const apply = () => {
+    const handle = document.querySelector('[data-side="rightbar"]');
+    if (handle === null) { applied = false; return; }
+    if (applied) return;
+    const frame = handle.parentElement;
+    if (frame === null) return;
+    const rect = frame.getBoundingClientRect();
+    if (rect.width < 1024) return;
+    const current = Math.round(rect.right - handle.getBoundingClientRect().left);
+    const desired = Math.round(rect.width * ratio);
+    if (Math.abs(current - desired) <= 12) { applied = true; return; }
+    const proto = Element.prototype;
+    const setCapture = proto.setPointerCapture;
+    const releaseCapture = proto.releasePointerCapture;
+    proto.setPointerCapture = function () {};
+    proto.releasePointerCapture = function () {};
+    try {
+      const start = handle.getBoundingClientRect().left + 4;
+      const target = rect.right - desired + 4;
+      const base = { bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1, clientY: 100 };
+      handle.dispatchEvent(new PointerEvent('pointerdown', { ...base, clientX: start }));
+      handle.dispatchEvent(new PointerEvent('pointermove', { ...base, clientX: target }));
+      handle.dispatchEvent(new PointerEvent('pointerup', { ...base, clientX: target, buttons: 0 }));
+      applied = true;
+    } finally {
+      proto.setPointerCapture = setCapture;
+      proto.releasePointerCapture = releaseCapture;
+    }
+  };
+  apply();
+  setInterval(apply, 1000);
+})()`
+
   const page = readFileSync(new URL('./page.html', import.meta.url), 'utf8')
   /** @type {Set<{ controller: AbortController, res: import('node:http').ServerResponse }>} */
   const streams = new Set()
@@ -248,6 +292,7 @@ export function apply(ctx, config) {
   ctx.effect(() => {
     const off = ctx.on('webserver/index-inject', (table) => {
       table.push({ kind: 'style', text: injectedStyle })
+      if (rightbarScript !== '') table.push({ kind: 'script', text: rightbarScript, placement: 'body' })
     })
     return () => { if (typeof off === 'function') off() }
   }, 'lx-dsh-peek:official-ui-overrides')

@@ -197,28 +197,41 @@ test('serves the light single-page peek UI', async () => {
   assert.match(body, /font: 15px/)
 })
 
-test('injects the official UI font, taller composer, and conversation-width overrides', () => {
+test('injects the official UI font, taller composer, width, and rightbar split', () => {
   const table = []
   for (const entry of listeners) {
     if (entry.event === 'webserver/index-inject') entry.listener(table)
   }
-  assert.equal(table.length, 1)
-  assert.equal(table[0].kind, 'style')
-  assert.match(table[0].text, /--dsh-content-font-size: 34px !important/)
-  assert.match(table[0].text, /--dsh-code-font-size: 24px !important/)
-  assert.match(table[0].text, /--dsh-terminal-font-size: 24px !important/)
-  assert.match(table[0].text, /--dsh-chat-user-width: 920px/)
-  assert.match(table[0].text, /\[data-conversation-content\] \{\s*--dsh-chat-content-width: 920px !important/)
-  assert.match(table[0].text, /--dsh-composer-card-max-width: 952px !important/)
-  assert.match(table[0].text, /\[data-width-handle\] \{\s*display: none !important/)
-  assert.match(table[0].text, /\[data-composer-input="true"\] \{\s*min-height: 200px !important/)
-  assert.match(table[0].text, /--dsh-composer-text-max-height: 360px !important/)
+  assert.equal(table.length, 2)
+  const style = table.find((row) => row.kind === 'style')
+  const script = table.find((row) => row.kind === 'script')
+  assert.ok(style)
+  assert.ok(script)
+  assert.match(style.text, /--dsh-content-font-size: 34px !important/)
+  assert.match(style.text, /--dsh-code-font-size: 24px !important/)
+  assert.match(style.text, /--dsh-terminal-font-size: 24px !important/)
+  assert.match(style.text, /--dsh-chat-user-width: 10000px/)
+  assert.match(style.text, /\[data-conversation-content\] \{\s*--dsh-chat-content-width: 10000px !important/)
+  assert.match(style.text, /--dsh-composer-card-max-width: 10032px !important/)
+  assert.match(style.text, /\[data-width-handle\] \{\s*display: none !important/)
+  assert.match(style.text, /\[data-composer-input="true"\] \{\s*min-height: 200px !important/)
+  assert.match(style.text, /--dsh-composer-text-max-height: 360px !important/)
+  assert.equal(script.placement, 'body')
+  assert.match(script.text, /const ratio = 0\.4;/)
+  assert.match(script.text, /\[data-side="rightbar"\]/)
+  assert.match(script.text, /pointerdown/)
 })
 
 test('rejects an invalid composer height', () => {
   assert.throws(() => apply({}, { port, composerHeight: 40 }), /composerHeight/)
   assert.throws(() => apply({}, { port, composerHeight: 601 }), /composerHeight/)
   assert.throws(() => apply({}, { port, composerHeight: 1.5 }), /composerHeight/)
+})
+
+test('rejects an invalid rightbar ratio', () => {
+  assert.throws(() => apply({}, { port, rightbarRatio: 0.2 }), /rightbarRatio/)
+  assert.throws(() => apply({}, { port, rightbarRatio: 0.7 }), /rightbarRatio/)
+  assert.throws(() => apply({}, { port, rightbarRatio: 'wide' }), /rightbarRatio/)
 })
 
 test('rejects an invalid conversation width', () => {
@@ -250,10 +263,11 @@ test('contentWidth 0 keeps the official width and drag handles', () => {
     apply(fake, { port: port + 1, contentWidth: 0 })
     const table = []
     for (const listener of injected) listener(table)
-    assert.equal(table.length, 1)
-    assert.match(table[0].text, /--dsh-content-font-size: 34px !important/)
-    assert.doesNotMatch(table[0].text, /--dsh-chat-content-width/)
-    assert.doesNotMatch(table[0].text, /data-width-handle/)
+    const style = table.find((row) => row.kind === 'style')
+    assert.ok(style)
+    assert.match(style.text, /--dsh-content-font-size: 34px !important/)
+    assert.doesNotMatch(style.text, /--dsh-chat-content-width/)
+    assert.doesNotMatch(style.text, /data-width-handle/)
   } finally {
     for (const off of disposers.reverse()) off()
   }
