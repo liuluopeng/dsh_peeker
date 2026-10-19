@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.13 — 2026-10-18
+
+- Render live tool calls from `tool-call-delta` frames and hydrate them from the `assistantStream` baseline. A turn that starts with a tool call now shows the tool name and arguments immediately instead of an empty pane; reasoning that ends where a tool call begins is followed by the action row, so it no longer looks cut off. `tool/call` events merge into the live row by call id instead of creating a duplicate.
+
 ## 0.5.12 — 2026-10-18
 
 - Add a muted canvas-video keep-awake fallback for browsers that deny Screen Wake Lock. A no-input page is often refused the Wake Lock API; the playing video keeps Android's screen awake so the browser does not suspend the page. A suspended page buffered the whole stream and applied it only at turn end, which looked like "no messages" and a completion flash about a minute late.

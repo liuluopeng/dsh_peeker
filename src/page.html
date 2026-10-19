@@ -326,6 +326,7 @@
   function renderPane(pane) {
     pane.body.textContent = ''
     pane.liveNode = null
+    pane.liveToolNode = null
     if (pane.items.length === 0) {
       pane.body.append(el('div', 'pane-empty', pane.snapshot ? '暂无输出' : '等待输出…'))
       return
@@ -334,6 +335,7 @@
       const node = nodeFor(pane, item)
       pane.body.append(node)
       if (item === pane.live) pane.liveNode = node
+      if (pane.liveTool !== null && item === pane.liveTool.item) pane.liveToolNode = node
     }
     scrollPane(pane)
   }
@@ -397,6 +399,38 @@
     scrollBody(pane)
   }
 
+  function handleToolCallDelta(pane, chunk) {
+    const delta = typeof chunk.argumentsDelta === 'string' ? chunk.argumentsDelta : ''
+    const callId = typeof chunk.id === 'string' ? chunk.id : ''
+    const name = typeof chunk.name === 'string' ? chunk.name : ''
+    let live = pane.liveTool
+    if (live === null || (callId !== '' && live.item.callId !== callId)) {
+      const item = {
+        kind: 'tool', name: name || 'tool', callId, args: delta,
+        result: null, error: false, done: false, time: Date.now(), live: true,
+      }
+      live = { item }
+      pane.liveTool = live
+      pane.items.push(item)
+      renderPane(pane)
+      return
+    }
+    live.item.name = name || live.item.name
+    live.item.callId = callId || live.item.callId
+    live.item.args += delta
+    if (pane.liveToolNode === null) {
+      renderPane(pane)
+      return
+    }
+    const body = pane.liveToolNode.querySelector('.body')
+    if (body === null) {
+      renderPane(pane)
+      return
+    }
+    body.append(document.createTextNode(delta))
+    scrollBody(pane)
+  }
+
   function ensureLive(pane) {
     if (pane.live !== null) return pane.live
     pane.live = { kind: 'assistant', text: '', reasoning: '', live: true, streamed: true, time: Date.now() }
@@ -425,14 +459,25 @@
         pane.live = null
         break
       }
-      case 'tool/call':
+      case 'tool/call': {
         pane.live = null
-        pane.items.push({
-          kind: 'tool', name: data.name || 'tool', callId: data.callId,
-          args: cut(data.arguments === undefined ? '' : data.arguments, 1000),
-          result: null, error: false, done: false, time: event.time,
-        })
+        const callId = typeof data.callId === 'string' ? data.callId : ''
+        const args = cut(data.arguments === undefined ? '' : data.arguments, 1000)
+        const existing = pane.items.find((item) => item.kind === 'tool' && item.callId === callId)
+        if (existing !== undefined) {
+          existing.name = data.name || existing.name
+          existing.args = args || existing.args
+          existing.live = false
+        } else {
+          pane.items.push({
+            kind: 'tool', name: data.name || 'tool', callId,
+            args, result: null, error: false, done: false, time: event.time,
+          })
+        }
+        pane.liveTool = null
+        pane.liveToolNode = null
         break
+      }
       case 'tool/result': {
         const block = (data.message && data.message.content && data.message.content[0]) || {}
         const parts = []
@@ -502,6 +547,8 @@
       const text = chunk.text || ''
       ensureLive(pane).reasoning += text
       appendLiveReasoning(pane, text)
+    } else if (chunk.type === 'tool-call-delta') {
+      handleToolCallDelta(pane, chunk)
     }
   }
 
@@ -741,18 +788,51 @@
     if (!Array.isArray(stream) || stream.length === 0) return
     let text = ''
     let reasoning = ''
+    const calls = new Map()
     for (const entry of stream) {
       const chunk = entry?.chunk
       if (!chunk) continue
-      if (chunk.type === 'text-delta') text += chunk.text || ''
-      else if (chunk.type === 'reasoning-delta') reasoning += chunk.text || ''
+      if (chunk.type === 'text-delta') {
+        text += chunk.text || ''
+      } else if (chunk.type === 'reasoning-delta') {
+        reasoning += chunk.text || ''
+      } else if (chunk.type === 'tool-call-delta') {
+        const id = typeof chunk.id === 'string' ? chunk.id : ''
+        const call = calls.get(id) ?? { id, name: 'tool', args: '', done: false }
+        if (typeof chunk.name === 'string' && chunk.name !== '') call.name = chunk.name
+        if (typeof chunk.argumentsDelta === 'string') call.args += chunk.argumentsDelta
+        calls.set(id, call)
+      } else if (chunk.type === 'block-end' && chunk.block?.type === 'tool-call') {
+        const block = chunk.block
+        const id = typeof block.id === 'string' ? block.id : ''
+        const call = calls.get(id) ?? { id, name: 'tool', args: '', done: false }
+        if (typeof block.name === 'string' && block.name !== '') call.name = block.name
+        if (typeof block.arguments === 'string') call.args = block.arguments
+        call.done = true
+        calls.set(id, call)
+      }
     }
-    if (text === '' && reasoning === '') return
-    const live = ensureLive(pane)
-    live.text = text
-    live.reasoning = reasoning
-    live.live = true
-    live.streamed = true
+    if (text !== '' || reasoning !== '') {
+      const live = ensureLive(pane)
+      live.text = text
+      live.reasoning = reasoning
+      live.live = true
+      live.streamed = true
+    }
+    for (const call of calls.values()) {
+      let item = pane.items.find((candidate) => candidate.kind === 'tool' && candidate.callId === call.id)
+      if (item === undefined) {
+        item = {
+          kind: 'tool', name: call.name, callId: call.id, args: cut(call.args, 1000),
+          result: null, error: false, done: false, time: Date.now(),
+        }
+        pane.items.push(item)
+      } else {
+        item.name = call.name || item.name
+        item.args = cut(call.args, 1000)
+      }
+      if (!call.done) pane.liveTool = { item }
+    }
   }
 
   function handlePane(pane, payload) {
@@ -760,6 +840,8 @@
     if (payload.t === 'snapshot') {
       pane.items = []
       pane.live = null
+      pane.liveTool = null
+      pane.liveToolNode = null
       pane.snapshot = true
       if (payload.dropped > 0) {
         pane.items.push({ kind: 'note', text: `已省略最早的 ${payload.dropped} 条事件，下面只显示最近的内容`, time: Date.now() })
@@ -840,7 +922,7 @@
       id: session.sessionId, title: session.title || session.sessionId, updatedAt: Number(session.updatedAt) || 0,
       parentSessionId: typeof session.parentSessionId === 'string' ? session.parentSessionId : '',
       running: session.running === true, streamState: streamOpen ? 'open' : 'connecting',
-      items: [], live: null, liveNode: null, snapshot: false,
+      items: [], live: null, liveNode: null, liveTool: null, liveToolNode: null, snapshot: false,
       startedAt: 0, jobs: new Map(), jobsEl, elapsedEl: elapsed,
       root, titleEl: title, dotEl: dot, statusEl: status, body,
     }

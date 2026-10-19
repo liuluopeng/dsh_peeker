@@ -177,6 +177,8 @@ test('serves the light single-page peek UI', async () => {
   assert.match(body, /appendLiveText/)
   assert.match(body, /appendLiveReasoning/)
   assert.match(body, /hydrateAssistantStream/)
+  assert.match(body, /handleToolCallDelta/)
+  assert.match(body, /tool-call-delta/)
   assert.match(body, /startWakeVideo/)
   assert.match(body, /id="wake"/)
   assert.match(body, /视频常亮/)
