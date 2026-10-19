@@ -16,7 +16,7 @@ A deliberately small, read-only, **light** LAN view of the active DSH sessions.
   - landscape: 2 and 3 panes sit side by side;
   - 4 panes use a 2×2 grid in both orientations;
   - more than 4 active tasks keeps the first 4 and shows `显示前 4 个`.
-- A live `turn/end` destroys that task's pane immediately and makes the whole screen flash three times (and vibrates when the browser allows it). There is no persistent `任务结束` banner.
+- A live `turn/end` destroys that task's pane immediately and flashes the whole background black/white at one-second intervals for three black phases (six phases total), then hides. It vibrates when the browser allows it. There is no persistent `任务结束` banner.
 - The same host plugin can enlarge the official DSH UI's fonts and widen its conversation column from `cordis.patch.yml`, without a patched DMG.
 
 ## Install

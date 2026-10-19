@@ -166,6 +166,10 @@ test('serves the light single-page peek UI', async () => {
   assert.match(body, /appendLiveText/)
   assert.match(body, /appendLiveReasoning/)
   assert.match(body, /scrollBody\(pane\)/)
+  assert.match(body, /flashTimer/)
+  assert.match(body, /#fff/)
+  assert.doesNotMatch(body, /#ffe066/)
+  assert.doesNotMatch(body, /flashEl\.animate/)
   assert.match(body, /font: 15px/)
 })
 

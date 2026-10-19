@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.10 — 2026-10-18
+
+- Replace the subtle yellow opacity pulse with a full-screen black/white completion flash. The overlay starts black, switches to white after one second, and alternates every second for three black phases (six phases total), then hides. Vibration is unchanged.
+
 ## 0.5.9 — 2026-10-18
 
 - Fix the phone transcript freezing after a few seconds of streaming. Text and reasoning deltas now append only the new fragment to the live DOM node instead of replacing the whole accumulated text on every token, and live updates scroll only the transcript instead of rescanning every `<pre>` block. Verified at 8× CPU throttling with a 180KB stream: the text kept growing and every sample stayed pinned to the tail.

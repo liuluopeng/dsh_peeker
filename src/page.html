@@ -117,7 +117,7 @@
     background: rgba(255, 255, 255, .95); border-top: 1px solid var(--line);
     color: var(--muted); font-size: 11px;
   }
-  #flash { position: fixed; inset: 0; z-index: 9999; background: #ffe066; opacity: 0; pointer-events: none; }
+  #flash { position: fixed; inset: 0; z-index: 9999; background: #000; opacity: 0; pointer-events: none; }
   .spinner {
     flex: 0 0 auto; width: 10px; height: 10px; border: 2px solid #cbd5e1;
     border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite;
@@ -182,6 +182,7 @@
   let streamOpen = false
   let lastStreamAt = 0
   let lastReopenAt = 0
+  let flashTimer = 0
 
   const el = (tag, className, text) => {
     const node = document.createElement(tag)
@@ -506,11 +507,24 @@
 
   function flashScreen(times) {
     const count = Math.max(1, Math.min(6, Number(times) || 3))
-    if (typeof flashEl.getAnimations === 'function') flashEl.getAnimations().forEach((animation) => animation.cancel())
-    flashEl.animate(
-      [{ opacity: 0 }, { opacity: 0.9 }, { opacity: 0 }],
-      { duration: 260, iterations: count, easing: 'ease-in-out' },
-    )
+    clearInterval(flashTimer)
+    flashTimer = 0
+    // Full-screen black/white alternation, one phase per second. The black
+    // phases are the visible "flash"; three black phases need six phases total.
+    flashEl.style.background = '#000'
+    flashEl.style.opacity = '1'
+    let phase = 0
+    flashTimer = setInterval(() => {
+      phase += 1
+      if (phase >= count * 2) {
+        clearInterval(flashTimer)
+        flashTimer = 0
+        flashEl.style.opacity = '0'
+        flashEl.style.background = '#000'
+        return
+      }
+      flashEl.style.background = phase % 2 === 1 ? '#fff' : '#000'
+    }, 1000)
     if (navigator.vibrate && navigator.userActivation?.hasBeenActive) navigator.vibrate([120, 80, 120, 80, 120])
   }
 
