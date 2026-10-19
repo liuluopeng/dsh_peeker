@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.6 — 2026-10-19
+
+- Tag the actual rightbar frame (`handle.parentElement`) with `data-lx-rightbar-frame` and target that attribute from CSS. The previous `:has(> [data-rightbar-col])` selector did not match in the Desktop shell, so `--lx-rightbar-width` was set but the grid track stayed at the host's narrow width. Verified on the live shell: `data-lx-rightbar-frame` is true and the computed grid follows `--lx-rightbar-width`; at 2044px the 0.4 default gives 280px sidebar + 946px conversation + 818px rightbar, with the handle at 1226px.
+- This makes the stored ratio visible again: a stored 0.3514 resolves to about 718px instead of staying at the minimum width.
+
 ## 0.6.5 — 2026-10-19
 
 - Apply the remembered right sidebar ratio with a CSS grid and handle override instead of synthetic pointer events. The host's rightbar width is a client-store value; synthetic pointer drags can be ignored, leaving the store or handle at its old/minimum width. The injected CSS sets the shell grid track from `--lx-rightbar-width` and positions `[data-side="rightbar"]` with the same value; the script updates that variable live while you drag and saves the ratio on pointerup. A stored ratio is now reflected regardless of whether the host accepts synthetic events.

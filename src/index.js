@@ -247,10 +247,10 @@ export function apply(ctx, config) {
   // when synthetic pointer events are ignored by the host page. The script
   // below updates the variables while the user drags.
   const rightbarStyle = `
-:root[data-lx-rightbar] div:has(> [data-rightbar-col]):not([data-rightbar-collapsed]) {
+[data-lx-rightbar-frame] {
   grid-template-columns: var(--lx-sidebar-width, 280px) minmax(400px, 1fr) var(--lx-rightbar-width, 40%) !important;
 }
-:root[data-lx-rightbar] [data-side="rightbar"] {
+[data-lx-rightbar-frame] [data-side="rightbar"] {
   left: calc(100% - var(--lx-rightbar-width)) !important;
 }`
   const injectedStyle = `${fontStyle}${widthStyle}${composerStyle}${rightbarStyle}`
@@ -265,6 +265,7 @@ export function apply(ctx, config) {
   try { stored = Number(localStorage.getItem(key)); } catch { stored = 0; }
   let ratio = Number.isFinite(stored) && stored >= 0.25 && stored <= 0.65 ? stored : ${rightbarRatio};
   let dragging = false;
+  let tagged = null;
   const root = document.documentElement;
   const handleOf = (event) => {
     const target = event.target;
@@ -279,12 +280,21 @@ export function apply(ctx, config) {
   };
   const apply = () => {
     const found = frameOf();
-    if (found === null) { root.removeAttribute('data-lx-rightbar'); return; }
-    const rect = found.frame.getBoundingClientRect();
-    if (rect.width < 1024) { root.removeAttribute('data-lx-rightbar'); return; }
-    const inline = found.frame.style.gridTemplateColumns || getComputedStyle(found.frame).gridTemplateColumns;
+    if (found === null) {
+      if (tagged !== null) tagged.removeAttribute('data-lx-rightbar-frame');
+      tagged = null;
+      root.removeAttribute('data-lx-rightbar');
+      return;
+    }
+    const frame = found.frame;
+    if (tagged !== null && tagged !== frame) tagged.removeAttribute('data-lx-rightbar-frame');
+    tagged = frame;
+    const rect = frame.getBoundingClientRect();
+    if (rect.width < 1024) { frame.removeAttribute('data-lx-rightbar-frame'); root.removeAttribute('data-lx-rightbar'); return; }
+    const inline = frame.style.gridTemplateColumns || getComputedStyle(frame).gridTemplateColumns;
     root.style.setProperty('--lx-sidebar-width', inline.split(' ')[0] || '280px');
     if (!dragging) root.style.setProperty('--lx-rightbar-width', Math.round(rect.width * ratio) + 'px');
+    frame.setAttribute('data-lx-rightbar-frame', '');
     root.setAttribute('data-lx-rightbar', '');
   };
   const setFromPointer = (event) => {
