@@ -163,6 +163,9 @@ test('serves the light single-page peek UI', async () => {
   assert.match(body, /parentSessionId/)
   assert.match(body, /ensureStreamFresh/)
   assert.match(body, /lastStreamAt/)
+  assert.match(body, /appendLiveText/)
+  assert.match(body, /appendLiveReasoning/)
+  assert.match(body, /scrollBody\(pane\)/)
   assert.match(body, /font: 15px/)
 })
 

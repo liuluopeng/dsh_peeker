@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.9 — 2026-10-18
+
+- Fix the phone transcript freezing after a few seconds of streaming. Text and reasoning deltas now append only the new fragment to the live DOM node instead of replacing the whole accumulated text on every token, and live updates scroll only the transcript instead of rescanning every `<pre>` block. Verified at 8× CPU throttling with a 180KB stream: the text kept growing and every sample stayed pinned to the tail.
+
 ## 0.5.8 — 2026-10-18
 
 - Add a stream heartbeat and stale-stream recovery. The server emits a data ping every 15 seconds; a visible page that has received no frame for 30 seconds drops the old EventSource and requests a fresh snapshot. This makes the phone recover immediately after the browser suspends the tab, instead of appearing to update only every few minutes.

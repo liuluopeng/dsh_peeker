@@ -232,8 +232,12 @@
   // monitor, so a new reasoning line, tool row, or transcript item must land in
   // view even if the reader had scrolled up. There is no "near bottom" grace
   // period to leave a pane frozen on an older line.
-  function scrollPane(pane) {
+  function scrollBody(pane) {
     pane.body.scrollTop = pane.body.scrollHeight
+  }
+
+  function scrollPane(pane) {
+    scrollBody(pane)
     pane.jobsEl.scrollTop = pane.jobsEl.scrollHeight
     for (const pre of pane.root.querySelectorAll('pre')) pre.scrollTop = pre.scrollHeight
   }
@@ -349,7 +353,47 @@
       if (text !== null) text.textContent = pane.live.reasoning || ''
       reasoning.hidden = !pane.live.reasoning
     }
-    scrollPane(pane)
+    scrollBody(pane)
+  }
+
+  /**
+   * Append only the new delta to the live text node. Replacing the whole
+   * accumulated text on every token made a phone's main thread fall behind
+   * after a few seconds; appending keeps each frame O(delta) instead of O(text).
+   */
+  function appendLiveText(pane, text) {
+    if (text === '' || pane.live === null) return
+    if (pane.liveNode === null) {
+      renderPane(pane)
+      return
+    }
+    const body = pane.liveNode.querySelector('.body')
+    if (body === null) {
+      renderPane(pane)
+      return
+    }
+    const node = document.createTextNode(text)
+    const cursor = body.querySelector('.cursor')
+    if (cursor !== null) body.insertBefore(node, cursor)
+    else body.append(node)
+    scrollBody(pane)
+  }
+
+  function appendLiveReasoning(pane, text) {
+    if (text === '' || pane.live === null) return
+    if (pane.liveNode === null) {
+      renderPane(pane)
+      return
+    }
+    const reasoning = pane.liveNode.querySelector('.reasoning')
+    const target = reasoning === null ? null : reasoning.querySelector('.reasoning-text')
+    if (reasoning === null || target === null) {
+      renderPane(pane)
+      return
+    }
+    target.append(document.createTextNode(text))
+    reasoning.hidden = false
+    scrollBody(pane)
   }
 
   function ensureLive(pane) {
@@ -450,11 +494,13 @@
     if (frame.type !== 'chunk' || !frame.chunk) return
     const chunk = frame.chunk
     if (chunk.type === 'text-delta') {
-      ensureLive(pane).text += chunk.text || ''
-      renderLive(pane)
+      const text = chunk.text || ''
+      ensureLive(pane).text += text
+      appendLiveText(pane, text)
     } else if (chunk.type === 'reasoning-delta') {
-      ensureLive(pane).reasoning += chunk.text || ''
-      renderLive(pane)
+      const text = chunk.text || ''
+      ensureLive(pane).reasoning += text
+      appendLiveReasoning(pane, text)
     }
   }
 
