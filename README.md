@@ -19,7 +19,7 @@ A deliberately small, read-only, **light** LAN view of the active DSH sessions.
   - 4 panes use a 2×2 grid in both orientations;
   - more than 4 active tasks keeps the first 4 and shows `显示前 4 个`.
 - A live `turn/end` destroys that task's pane immediately and flashes the whole background black/white at one-second intervals for three black phases (six phases total), then hides. It vibrates when the browser allows it. There is no persistent `任务结束` banner.
-- The same host plugin can enlarge the official DSH UI's fonts, widen its conversation column, and raise its composer height from `cordis.patch.yml`, without a patched DMG.
+- The same host plugin can enlarge the official DSH UI's fonts, set the conversation column width, and raise its composer height from `cordis.patch.yml`, without a patched DMG.
 
 ## Install
 
@@ -69,22 +69,22 @@ The same host plugin can enlarge and widen the **official** DSH UI. It listens t
 
 The official theme writes its font variables to `body` as normal inline styles; the `!important` stylesheet rule wins, so the rendered UI uses these values even though the official Settings schema still caps the text row at 22px (code 16, terminal 20).
 
-By default `contentWidth: fill` makes the same style row use the whole conversation pane:
+By default `contentWidth: 920` pins a readable column (the proportion in the screenshot). `fill` uses the whole conversation pane; `0` keeps the official width:
 
 ```css
 :root, body {
-  --dsh-chat-user-width: 10000px;
+  --dsh-chat-user-width: 920px;
 }
 [data-conversation-content] {
-  --dsh-chat-content-width: 10000px !important;
-  --dsh-composer-card-max-width: 10032px !important;
+  --dsh-chat-content-width: 920px !important;
+  --dsh-composer-card-max-width: 952px !important;
 }
 [data-conversation-content] [data-width-handle] {
   display: none !important;
 }
 ```
 
-The official conversation column is adaptive and caps at 920px. `fill` is injected as a cap above any real viewport, so the official `width: 100%` rules let the transcript, assistant/user text, wide tables, and composer consume the entire center pane instead of a fixed-width column centered inside it. For a readable fixed measure, set `contentWidth` to an integer from 640 to 2400; set `0` to keep the official width and its drag handles. Any nonzero value hides the handles because the pinned width ignores their preference.
+With `contentWidth: 920` the conversation column is a centered 920px measure. `fill` instead injects a cap above any real viewport, so the official `width: 100%` rules let the transcript, assistant/user text, wide tables, and composer consume the entire center pane. Set `contentWidth` to an integer from 640 to 2400, `0` to keep the official width and its drag handles, or `fill` for the whole pane. Any nonzero value hides the handles because the pinned width ignores their preference.
 
 The conversation still cannot exceed the center pane. On desktop the left sidebar occupies 264–420px and an open right sidebar starts at 300px, so collapse the right sidebar with `⌘⌥B` and the left sidebar with `⌘B` (macOS desktop), or drag them narrower, to give the text more room.
 
@@ -98,7 +98,7 @@ Set the actual sizes and width in `cordis.patch.yml`:
       name: lx_dsh_peek
       config:
         port: 3082
-        contentWidth: fill
+        contentWidth: 920
         fontSize: 34
         codeFontSize: 24
         terminalFontSize: 24
@@ -115,7 +115,7 @@ For a package installed from GitHub, do not edit files under `node_modules`. Put
 - id: lx-dsh-peek
   config:
     port: 3082
-    contentWidth: fill
+    contentWidth: 920
     fontSize: 34
     codeFontSize: 24
     terminalFontSize: 24
@@ -156,7 +156,7 @@ Change the port, conversation width, or font sizes in `cordis.patch.yml`:
       name: lx_dsh_peek
       config:
         port: 3083
-        contentWidth: fill
+        contentWidth: 920
         fontSize: 34
         codeFontSize: 24
         terminalFontSize: 24

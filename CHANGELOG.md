@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2 — 2026-10-19
+
+- Change the default `contentWidth` from `fill` to `920px`, matching the readable conversation column in the screenshot. The composer follows at 952px. `fill` is still available; `0` keeps the official width and drag handles.
+
 ## 0.6.1 — 2026-10-19
 
 - Add `composerHeight` (default 200, range 80–600, `0` disables) to the official-UI stylesheet. It targets the stable `[data-composer-input="true"]` and `[data-composer-card="true"]` attributes, sets the input's min-height, and raises the scroll cap to `composerHeight + 160px`. Verified on the official Desktop UI: the empty composer input grows from 52px to 200px and the card from 114px to 262px.

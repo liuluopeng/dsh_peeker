@@ -194,7 +194,7 @@ export function apply(ctx, config) {
       throw new Error(`lx_dsh_peek: ${name} must be an integer from 8 to 80, got ${JSON.stringify(value)}`)
     }
   }
-  const rawContentWidth = config?.contentWidth ?? 'fill'
+  const rawContentWidth = config?.contentWidth ?? 920
   const contentWidth = rawContentWidth === 'fill' ? FILL_WIDTH : Number(rawContentWidth)
   if (rawContentWidth !== 'fill' && (!Number.isInteger(contentWidth) || (contentWidth !== 0 && (contentWidth < 640 || contentWidth > 2400)))) {
     throw new Error(`lx_dsh_peek: contentWidth must be 'fill', 0 (official width), or an integer from 640 to 2400, got ${JSON.stringify(config?.contentWidth)}`)
