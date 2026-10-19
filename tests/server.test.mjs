@@ -223,6 +223,8 @@ test('injects the official UI font, taller composer, width, and rightbar split',
   assert.match(script.text, /\[data-side="rightbar"\]/)
   assert.match(script.text, /pointerdown/)
   assert.match(script.text, /data-lx-rightbar-frame/)
+  assert.match(script.text, /closest\('\._6Qf49G_frame'\)/)
+  assert.match(script.text, /frame\.style\.setProperty\('--lx-rightbar-width'/)
   assert.match(script.text, /pointerup/)
   assert.match(script.text, /lx-dsh-peek\.rightbar-ratio/)
   assert.match(script.text, /localStorage/)

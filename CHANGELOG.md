@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.7 — 2026-10-19
+
+- Resolve the actual shell frame with `handle.closest('._6Qf49G_frame')` and set `--lx-sidebar-width` / `--lx-rightbar-width` on that frame. `handle.parentElement` is not always the frame; on the live shell the variable reached a wrapper while the frame grid kept the old width. Frame-local variables plus the direct `data-lx-rightbar-frame` attribute make the grid and handle follow the remembered ratio exactly.
+
 ## 0.6.6 — 2026-10-19
 
 - Tag the actual rightbar frame (`handle.parentElement`) with `data-lx-rightbar-frame` and target that attribute from CSS. The previous `:has(> [data-rightbar-col])` selector did not match in the Desktop shell, so `--lx-rightbar-width` was set but the grid track stayed at the host's narrow width. Verified on the live shell: `data-lx-rightbar-frame` is true and the computed grid follows `--lx-rightbar-width`; at 2044px the 0.4 default gives 280px sidebar + 946px conversation + 818px rightbar, with the handle at 1226px.

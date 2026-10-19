@@ -274,7 +274,7 @@ export function apply(ctx, config) {
   const frameOf = () => {
     const handle = document.querySelector('[data-side="rightbar"]');
     if (handle === null) return null;
-    const frame = handle.parentElement;
+    const frame = handle.closest('._6Qf49G_frame') ?? handle.parentElement;
     if (frame === null || frame.hasAttribute('data-rightbar-collapsed')) return null;
     return { frame, handle };
   };
@@ -292,8 +292,8 @@ export function apply(ctx, config) {
     const rect = frame.getBoundingClientRect();
     if (rect.width < 1024) { frame.removeAttribute('data-lx-rightbar-frame'); root.removeAttribute('data-lx-rightbar'); return; }
     const inline = frame.style.gridTemplateColumns || getComputedStyle(frame).gridTemplateColumns;
-    root.style.setProperty('--lx-sidebar-width', inline.split(' ')[0] || '280px');
-    if (!dragging) root.style.setProperty('--lx-rightbar-width', Math.round(rect.width * ratio) + 'px');
+    frame.style.setProperty('--lx-sidebar-width', inline.split(' ')[0] || '280px');
+    if (!dragging) frame.style.setProperty('--lx-rightbar-width', Math.round(rect.width * ratio) + 'px');
     frame.setAttribute('data-lx-rightbar-frame', '');
     root.setAttribute('data-lx-rightbar', '');
   };
@@ -304,7 +304,7 @@ export function apply(ctx, config) {
     const next = (rect.right - event.clientX) / rect.width;
     if (next < 0.25 || next > 0.65) return;
     ratio = next;
-    root.style.setProperty('--lx-rightbar-width', Math.round(rect.width * ratio) + 'px');
+    found.frame.style.setProperty('--lx-rightbar-width', Math.round(rect.width * ratio) + 'px');
   };
   document.addEventListener('pointerdown', (event) => {
     if (handleOf(event) !== null) { dragging = true; apply(); }
