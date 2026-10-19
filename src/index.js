@@ -242,7 +242,18 @@ export function apply(ctx, config) {
 [data-composer-card="true"] {
   --dsh-composer-text-max-height: ${Math.max(360, composerHeight + 160)}px !important;
 }`
-  const injectedStyle = `${fontStyle}${widthStyle}${composerStyle}`
+  // The right sidebar is a grid track in the official shell. Drive the track
+  // and its drag handle from CSS variables so the remembered ratio applies even
+  // when synthetic pointer events are ignored by the host page. The script
+  // below updates the variables while the user drags.
+  const rightbarStyle = `
+:root[data-lx-rightbar] div:has(> [data-rightbar-col]):not([data-rightbar-collapsed]) {
+  grid-template-columns: var(--lx-sidebar-width, 280px) minmax(400px, 1fr) var(--lx-rightbar-width, 40%) !important;
+}
+:root[data-lx-rightbar] [data-side="rightbar"] {
+  left: calc(100% - var(--lx-rightbar-width)) !important;
+}`
+  const injectedStyle = `${fontStyle}${widthStyle}${composerStyle}${rightbarStyle}`
 
   // The right sidebar (terminal/editor) width is a px preference in a client
   // store, not a CSS variable. Set it with the same gesture a user would use:
@@ -253,65 +264,54 @@ export function apply(ctx, config) {
   let stored = 0;
   try { stored = Number(localStorage.getItem(key)); } catch { stored = 0; }
   let ratio = Number.isFinite(stored) && stored >= 0.25 && stored <= 0.65 ? stored : ${rightbarRatio};
-  let applied = false;
-  let autoDragging = false;
-  let manualHandle = null;
+  let dragging = false;
+  const root = document.documentElement;
   const handleOf = (event) => {
     const target = event.target;
     return target instanceof Element ? target.closest('[data-side="rightbar"]') : null;
   };
-  const save = (event) => {
-    if (autoDragging) { manualHandle = null; return; }
-    const handle = handleOf(event) ?? manualHandle;
-    manualHandle = null;
-    if (handle === null) return;
+  const frameOf = () => {
+    const handle = document.querySelector('[data-side="rightbar"]');
+    if (handle === null) return null;
     const frame = handle.parentElement;
-    if (frame === null) return;
-    const rect = frame.getBoundingClientRect();
-    if (rect.width < 1024) return;
+    if (frame === null || frame.hasAttribute('data-rightbar-collapsed')) return null;
+    return { frame, handle };
+  };
+  const apply = () => {
+    const found = frameOf();
+    if (found === null) { root.removeAttribute('data-lx-rightbar'); return; }
+    const rect = found.frame.getBoundingClientRect();
+    if (rect.width < 1024) { root.removeAttribute('data-lx-rightbar'); return; }
+    const inline = found.frame.style.gridTemplateColumns || getComputedStyle(found.frame).gridTemplateColumns;
+    root.style.setProperty('--lx-sidebar-width', inline.split(' ')[0] || '280px');
+    if (!dragging) root.style.setProperty('--lx-rightbar-width', Math.round(rect.width * ratio) + 'px');
+    root.setAttribute('data-lx-rightbar', '');
+  };
+  const setFromPointer = (event) => {
+    const found = frameOf();
+    if (found === null) return;
+    const rect = found.frame.getBoundingClientRect();
     const next = (rect.right - event.clientX) / rect.width;
     if (next < 0.25 || next > 0.65) return;
     ratio = next;
-    try { localStorage.setItem(key, String(next)); } catch { /* private mode */ }
+    root.style.setProperty('--lx-rightbar-width', Math.round(rect.width * ratio) + 'px');
   };
   document.addEventListener('pointerdown', (event) => {
-    const handle = handleOf(event);
-    if (handle !== null) { applied = true; manualHandle = handle; }
+    if (handleOf(event) !== null) { dragging = true; apply(); }
   }, true);
-  document.addEventListener('pointerup', save, true);
-  const apply = () => {
-    const handle = document.querySelector('[data-side="rightbar"]');
-    if (handle === null) { applied = false; return; }
-    if (applied) return;
-    const frame = handle.parentElement;
-    if (frame === null) return;
-    const rect = frame.getBoundingClientRect();
-    if (rect.width < 1024) return;
-    const current = Math.round(rect.right - handle.getBoundingClientRect().left);
-    const desired = Math.round(rect.width * ratio);
-    if (Math.abs(current - desired) <= 12) { applied = true; return; }
-    const proto = Element.prototype;
-    const setCapture = proto.setPointerCapture;
-    const releaseCapture = proto.releasePointerCapture;
-    proto.setPointerCapture = function () {};
-    proto.releasePointerCapture = function () {};
-    try {
-      autoDragging = true;
-      const start = handle.getBoundingClientRect().left + 4;
-      const target = rect.right - desired + 4;
-      const base = { bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1, clientY: 100 };
-      handle.dispatchEvent(new PointerEvent('pointerdown', { ...base, clientX: start }));
-      handle.dispatchEvent(new PointerEvent('pointermove', { ...base, clientX: target }));
-      handle.dispatchEvent(new PointerEvent('pointerup', { ...base, clientX: target, buttons: 0 }));
-      applied = true;
-    } finally {
-      autoDragging = false;
-      proto.setPointerCapture = setCapture;
-      proto.releasePointerCapture = releaseCapture;
-    }
-  };
+  document.addEventListener('pointermove', (event) => {
+    if (dragging) setFromPointer(event);
+  }, true);
+  document.addEventListener('pointerup', (event) => {
+    if (!dragging) return;
+    dragging = false;
+    setFromPointer(event);
+    try { localStorage.setItem(key, String(ratio)); } catch { /* private mode */ }
+    apply();
+  }, true);
   apply();
   setInterval(apply, 1000);
+  window.addEventListener('resize', apply);
 })()`
 
   const page = readFileSync(new URL('./page.html', import.meta.url), 'utf8')

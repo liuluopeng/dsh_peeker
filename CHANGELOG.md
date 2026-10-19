@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.5 — 2026-10-19
+
+- Apply the remembered right sidebar ratio with a CSS grid and handle override instead of synthetic pointer events. The host's rightbar width is a client-store value; synthetic pointer drags can be ignored, leaving the store or handle at its old/minimum width. The injected CSS sets the shell grid track from `--lx-rightbar-width` and positions `[data-side="rightbar"]` with the same value; the script updates that variable live while you drag and saves the ratio on pointerup. A stored ratio is now reflected regardless of whether the host accepts synthetic events.
+- Add the `[data-rightbar-col]` grid override with a 40% fallback and a `data-lx-rightbar` root attribute.
+
 ## 0.6.4 — 2026-10-19
 
 - Remember the right sidebar split. When you drag the `[data-side="rightbar"]` divider, the injected script stores the resulting ratio in `localStorage` (`lx-dsh-peek.rightbar-ratio`) and applies it on later loads. `rightbarRatio` is only the initial default when no stored value exists; the startup auto-adjust no longer overwrites the stored ratio. This lets you adjust once to any width you like.
