@@ -259,6 +259,10 @@ export function apply(ctx, config) {
       }
       return
     }
+    if (url.pathname === '/api/bootstrap') {
+      await handleBootstrap(req, res, url)
+      return
+    }
     if (url.pathname === '/api/stream') {
       await handleStream(req, res, url)
       return
@@ -327,6 +331,55 @@ export function apply(ctx, config) {
   }
 
   /**
+   * Serve the initial transcript as a plain JSON response.
+   *
+   * A large one-shot SSE write is exactly what mobile networks/proxies buffer
+   * until more data arrives, which leaves the phone showing only "运行中". The
+   * DSH mobile bridge solves this by bootstrapping over a normal HTTP request
+   * and keeping SSE for live deltas; this endpoint is the same split for the
+   * peek page.
+   */
+  async function handleBootstrap(req, res, url) {
+    const sessionId = url.searchParams.get('sessionId') ?? ''
+    if (sessionId === '') {
+      sendJson(res, 400, { error: 'missing sessionId' })
+      return
+    }
+    const parentSessionId = url.searchParams.get('parentSessionId') ?? ''
+    const address = parentSessionId === ''
+      ? { kind: 'session', sessionId }
+      : { kind: 'subagent', parentSessionId, childSessionId: sessionId, mode: 'unknown' }
+    const controller = new AbortController()
+    let timedOut = false
+    const timer = setTimeout(() => { timedOut = true; controller.abort() }, 10000)
+    try {
+      const frames = ctx.sessionController.follow({
+        address,
+        maxMessages: 200,
+        assistantStream: true,
+      }, controller.signal)
+      for await (const frame of frames) {
+        if (frame?.type !== 'snapshot') continue
+        const fitted = fitSnapshot(frame.records)
+        sendJson(res, 200, {
+          records: fitted.records,
+          dropped: fitted.dropped,
+          ...(typeof frame.cursor === 'number' ? { cursor: frame.cursor } : {}),
+          ...(frame.assistantStream === undefined ? {} : { assistantStream: frame.assistantStream }),
+        })
+        return
+      }
+      sendJson(res, 200, { records: [], dropped: 0 })
+    } catch (error) {
+      if (timedOut) sendJson(res, 200, { records: [], dropped: 0 })
+      else sendJson(res, 500, { error: String(error?.message ?? error) })
+    } finally {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }
+
+  /**
    * Serve one SSE stream for one or more sessions.
    *
    * The mobile page opens a single connection and passes every visible session
@@ -364,6 +417,9 @@ export function apply(ctx, config) {
       'x-accel-buffering': 'no',
     })
     res.write('retry: 2000\n\n')
+    // First real data frame: proves the stream is live before any follow work.
+    // The initial transcript is fetched separately through /api/bootstrap.
+    sendEvent(res, { t: 'ready' })
     const controllers = new Map()
     const jobAborts = new Map()
     let entry
@@ -414,13 +470,11 @@ export function apply(ctx, config) {
         for await (const frame of frames) {
           if (controller.signal.aborted || disposed) break
           if (frame?.type === 'snapshot') {
-            const fitted = fitSnapshot(frame.records)
-            emit(sessionId, {
-              t: 'snapshot',
-              records: fitted.records,
-              dropped: fitted.dropped,
-              ...(frame.assistantStream === undefined ? {} : { assistantStream: frame.assistantStream }),
-            })
+            // The page has already bootstrapped this session over plain HTTP.
+            // Do not put a large snapshot back on the SSE connection; mobile
+            // proxies can buffer it until another write, which looks like a
+            // permanently "running" pane with no messages.
+            continue
           } else if (frame?.type === 'event') {
             emit(sessionId, { t: 'event', event: shrink(trimEvent(frame.event)) })
             if (frame.event?.type === 'turn/end') emit(sessionId, { t: 'flash', times: 3 })

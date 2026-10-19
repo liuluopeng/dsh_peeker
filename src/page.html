@@ -190,6 +190,7 @@
   // poll's re-creation check until the host stops reporting them as running.
   const dismissed = new Set()
   let syncing = false
+  let refreshing = false
   let streamSource = null
   let streamKey = ''
   let streamOpen = false
@@ -721,7 +722,7 @@
     const stale = streamSource === null || !streamOpen || now - lastStreamAt > 30000
     if (!stale || now - lastReopenAt < 10000) return
     lastReopenAt = now
-    openSharedStream(true)
+    void refreshPanes()
   }
 
   /**
@@ -1046,7 +1047,7 @@
       parentSessionId: typeof session.parentSessionId === 'string' ? session.parentSessionId : '',
       running: session.running === true, streamState: streamOpen ? 'open' : 'connecting',
       items: [], live: null, liveNode: null, liveTool: null, liveToolNode: null, snapshot: false,
-      createdAt: Date.now(), reopenedEmpty: false,
+      createdAt: Date.now(), reopenedEmpty: false, bootstrapped: false, bootstrapStarted: false,
       term: null, termNode: null, termText: '', termPlaceholder: false, termLiveHeader: false, termReasoningHeader: false,
       startedAt: 0, jobs: new Map(), jobsEl, elapsedEl: elapsed,
       root, titleEl: title, dotEl: dot, statusEl: status, body,
@@ -1071,6 +1072,56 @@
     pane.root.remove()
     panes.delete(pane.id)
     updateLayout()
+  }
+
+  async function bootstrapPane(pane) {
+    if (pane.bootstrapped === true || pane.bootstrapStarted === true) return
+    pane.bootstrapStarted = true
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 10000)
+    try {
+      const query = new URLSearchParams({ sessionId: pane.id })
+      if (pane.parentSessionId !== '') query.set('parentSessionId', pane.parentSessionId)
+      const response = await fetch(`/api/bootstrap?${query}`, { cache: 'no-store', signal: controller.signal })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const body = await response.json()
+      handlePane(pane, {
+        t: 'snapshot',
+        records: body.records,
+        dropped: body.dropped,
+        assistantStream: body.assistantStream,
+      })
+      pane.bootstrapped = true
+    } catch {
+      // Keep the live stream path usable even if the one-shot bootstrap fails;
+      // the note explains why the pane may start blank.
+      pane.snapshot = true
+      pane.bootstrapped = true
+      if (pane.items.length === 0) {
+        pane.items.push({ kind: 'note', text: '无法加载历史，等待实时输出', time: Date.now() })
+        renderPane(pane)
+      }
+    } finally {
+      clearTimeout(timer)
+      pane.bootstrapStarted = false
+      paintPane(pane)
+    }
+  }
+
+  async function refreshPanes() {
+    if (refreshing || panes.size === 0) return
+    refreshing = true
+    try {
+      const list = [...panes.values()]
+      for (const pane of list) {
+        pane.bootstrapped = false
+        pane.bootstrapStarted = false
+      }
+      await Promise.all(list.map(bootstrapPane))
+      openSharedStream(true)
+    } finally {
+      refreshing = false
+    }
   }
 
   async function sync() {
@@ -1119,6 +1170,14 @@
       for (const pane of [...panes.values()]) {
         if (panes.size <= MAX_PANES) break
         if (!activeIds.has(pane.id)) removePane(pane)
+      }
+
+      // The initial transcript comes from ordinary HTTP, never from the first
+      // SSE write. Open the live stream only after the new panes have content.
+      const fresh = [...panes.values()].filter((pane) => pane.bootstrapped !== true && pane.bootstrapStarted !== true)
+      if (fresh.length > 0) {
+        await Promise.all(fresh.map(bootstrapPane))
+        needReopen = true
       }
 
       openSharedStream(needReopen)
@@ -1181,7 +1240,7 @@
     for (const pane of panes.values()) {
       if (pane.running && !paneHasContent(pane) && !pane.reopenedEmpty && now - pane.createdAt > 4000) {
         pane.reopenedEmpty = true
-        openSharedStream(true)
+        void refreshPanes()
         break
       }
     }

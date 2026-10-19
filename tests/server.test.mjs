@@ -177,6 +177,8 @@ test('serves the light single-page peek UI', async () => {
   assert.match(body, /appendLiveText/)
   assert.match(body, /appendLiveReasoning/)
   assert.match(body, /hydrateAssistantStream/)
+  assert.match(body, /bootstrapPane/)
+  assert.match(body, /\/api\/bootstrap/)
   assert.match(body, /handleToolCallDelta/)
   assert.match(body, /tool-call-delta/)
   assert.match(body, /MAX_RENDER_ITEMS/)
@@ -266,7 +268,17 @@ test('lists sessions and refuses writes', async () => {
   assert.deepEqual(await write.json(), { error: 'read-only' })
 })
 
-test('streams a snapshot, deltas, and a completion flash', async () => {
+test('serves the initial transcript over plain HTTP bootstrap', async () => {
+  const response = await fetch(`${base}/api/bootstrap?sessionId=session-test`)
+  assert.equal(response.status, 200)
+  assert.match(response.headers.get('content-type') ?? '', /application\/json/)
+  const body = await response.json()
+  assert.equal(body.dropped, 0)
+  assert.match(JSON.stringify(body.records), /hello session-test/)
+  assert.equal(body.assistantStream.activeAttempt.stream[0].chunk.text, 'partial-test')
+})
+
+test('streams live deltas and a completion flash without an SSE snapshot', async () => {
   const controller = new AbortController()
   try {
     const response = await fetch(`${base}/api/stream?sessionId=session-test`, { signal: controller.signal })
@@ -280,9 +292,8 @@ test('streams a snapshot, deltas, and a completion flash', async () => {
       if (done) break
       body += decoder.decode(value, { stream: true })
     }
-    assert.match(body, /"t":"snapshot"/)
-    assert.match(body, /"assistantStream"/)
-    assert.match(body, /partial-test/)
+    assert.match(body, /"t":"ready"/)
+    assert.doesNotMatch(body, /"t":"snapshot"/)
     assert.match(body, /"t":"delta"/)
     assert.match(body, /"t":"jobs"/)
     assert.match(body, /"t":"job-output"/)
@@ -309,7 +320,8 @@ test('multiplexes several sessions over one SSE and tags every frame', async () 
     }
     assert.match(body, /"sessionId":"session-test"/)
     assert.match(body, /"sessionId":"session-second"/)
-    assert.match(body, /"t":"snapshot"/)
+    assert.match(body, /"t":"ready"/)
+    assert.doesNotMatch(body, /"t":"snapshot"/)
     assert.match(body, /"t":"delta"/)
     assert.match(body, /"t":"jobs"/)
     assert.match(body, /"t":"job-output"/)
@@ -321,36 +333,24 @@ test('multiplexes several sessions over one SSE and tags every frame', async () 
       })
     assert.ok(frames.length > 0)
     for (const frame of frames) {
+      if (frame.t === 'ready') continue
       assert.ok(frame.sessionId === 'session-test' || frame.sessionId === 'session-second')
     }
-    assert.ok(frames.filter((frame) => frame.t === 'snapshot').length >= 2)
   } finally {
     controller.abort()
   }
 })
 
-test('follows a subagent with its durable parent address', async () => {
+test('bootstraps a subagent with its durable parent address', async () => {
   followAddresses.length = 0
-  const controller = new AbortController()
-  try {
-    const response = await fetch(`${base}/api/stream?sessionId=session-subagent&parentSessionId=session-test`, { signal: controller.signal })
-    assert.equal(response.status, 200)
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let body = ''
-    for (let reads = 0; reads < 50 && !body.includes('"t":"snapshot"'); reads += 1) {
-      const { value, done } = await reader.read()
-      if (done) break
-      body += decoder.decode(value, { stream: true })
-    }
-    assert.match(body, /hello session-subagent/)
-    assert.deepEqual(followAddresses[0], {
-      kind: 'subagent',
-      parentSessionId: 'session-test',
-      childSessionId: 'session-subagent',
-      mode: 'unknown',
-    })
-  } finally {
-    controller.abort()
-  }
+  const response = await fetch(`${base}/api/bootstrap?sessionId=session-subagent&parentSessionId=session-test`)
+  assert.equal(response.status, 200)
+  const body = await response.json()
+  assert.match(JSON.stringify(body), /hello session-subagent/)
+  assert.deepEqual(followAddresses[0], {
+    kind: 'subagent',
+    parentSessionId: 'session-test',
+    childSessionId: 'session-subagent',
+    mode: 'unknown',
+  })
 })

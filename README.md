@@ -134,6 +134,13 @@ Open `http://<lan-ip>:3082/?terminal=1` for the lightest rendering path: the new
 
 The default card view creates one article per user/assistant message, tool call, and tool result; a long agent session can accumulate hundreds. Snapshots are trimmed to the newest 60 items before rendering, and terminal mode removes the per-item DOM entirely.
 
+### Transport
+
+- `GET /api/sessions` every 3 seconds discovers active sessions.
+- `GET /api/bootstrap?sessionId=…` (and `parentSessionId=…` for subagents) returns the initial history and the in-progress `assistantStream` baseline as ordinary JSON.
+- One shared `GET /api/stream` SSE connection carries only live events and deltas (plus a `ready` frame and data heartbeats). The initial transcript is deliberately not sent over SSE: a large one-shot SSE write can be buffered by mobile networks/proxies until more data arrives, which looks like a pane stuck on `运行中`.
+- There is no WebSocket. For a read-only monitor, server-to-client SSE plus a normal HTTP bootstrap is simpler and reconnects automatically; bidirectional remote control needs a WebSocket/Gateway or relay instead.
+
 ## Configuration
 
 Change the port, conversation width, or font sizes in `cordis.patch.yml`:

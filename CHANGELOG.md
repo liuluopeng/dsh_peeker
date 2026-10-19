@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0 — 2026-10-18
+
+- Move the initial transcript to `GET /api/bootstrap`, an ordinary JSON response. The shared SSE now carries only live events/deltas, a `ready` frame, and heartbeats; it no longer writes a large initial snapshot. Mobile networks and proxies can buffer a one-shot SSE response until more data arrives, which is why the first pane could sit on `运行中` with no messages.
+- The page bootstraps new panes over HTTP before opening the live stream, and re-bootstraps on a stale stream, visibility resume, or an empty pane. This is the same bootstrap + SSE split used by the DSH mobile bridge.
+- Tests now cover the bootstrap endpoint, the no-snapshot SSE stream, and the subagent bootstrap address.
+
 ## 0.5.15 — 2026-10-18
 
 - Add an optional terminal renderer at `/?terminal=1`. It formats the newest 60 items into one `<pre>` text buffer (32KB cap) with `你` / `DSH` / `思考` / `工具` / `系统` prefixes, so a pane uses one text node instead of one styled card per event. The normal URL keeps the card view.
