@@ -90,7 +90,9 @@ By default `contentWidth: fill` makes the conversation content use the whole cen
 
 DSH stores the right sidebar (terminal/editor) width as a px preference. It initializes at 45% of the frame only the first time it opens; if it was first opened in a narrow window, that small px value stays after the window grows. The plugin injects a small official-UI script that performs the same gesture as a manual resize: it drags the `[data-side="rightbar"]` handle once to `rightbarRatio` (default `0.4`) of the frame. At 2044px this gives approximately 280px sidebar + 950px conversation + 814px right terminal, matching the screenshot.
 
-The script runs when the right sidebar is open and re-applies after it is closed and reopened; it does not fight a later manual drag. Set `rightbarRatio: 0` to disable only this split adjustment. It does not change the content width: keep `contentWidth: fill` to remove the centered side margins inside the conversation pane.
+The script runs when the right sidebar is open and re-applies after it is closed and reopened. The ratio is remembered: after you drag the divider once, the script stores the resulting ratio in `localStorage` under `lx-dsh-peek.rightbar-ratio` and applies it on future loads. `rightbarRatio` is only the initial default when no stored ratio exists, and the startup adjustment does not overwrite a stored value. Set `rightbarRatio: 0` to disable the script, or clear that localStorage key to reset to the configured default. It does not change the content width: keep `contentWidth: fill` to remove the centered side margins inside the conversation pane.
+
+A plugin update only changes the HTML served on the next page load. If the right sidebar still looks unchanged, fully quit and reopen `DeepSeek Harness.app` (or reload the window) so the new index script is loaded; an already-open window keeps the old HTML.
 
 The conversation still cannot exceed the center pane. On desktop the left sidebar occupies 264–420px and an open right sidebar starts at 300px, so collapse the right sidebar with `⌘⌥B` and the left sidebar with `⌘B` (macOS desktop), or drag them narrower, to give the text more room.
 

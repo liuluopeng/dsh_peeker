@@ -217,9 +217,12 @@ test('injects the official UI font, taller composer, width, and rightbar split',
   assert.match(style.text, /\[data-composer-input="true"\] \{\s*min-height: 200px !important/)
   assert.match(style.text, /--dsh-composer-text-max-height: 360px !important/)
   assert.equal(script.placement, 'body')
-  assert.match(script.text, /const ratio = 0\.4;/)
+  assert.match(script.text, /let ratio = .*0\.4/)
   assert.match(script.text, /\[data-side="rightbar"\]/)
   assert.match(script.text, /pointerdown/)
+  assert.match(script.text, /pointerup/)
+  assert.match(script.text, /lx-dsh-peek\.rightbar-ratio/)
+  assert.match(script.text, /localStorage/)
 })
 
 test('rejects an invalid composer height', () => {

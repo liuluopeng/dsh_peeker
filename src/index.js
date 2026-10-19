@@ -249,8 +249,36 @@ export function apply(ctx, config) {
   // drag the rightbar handle once after the page loads. This keeps the official
   // resize math, the store, and the handle in sync.
   const rightbarScript = rightbarRatio === 0 ? '' : `(() => {
-  const ratio = ${rightbarRatio};
+  const key = 'lx-dsh-peek.rightbar-ratio';
+  let stored = 0;
+  try { stored = Number(localStorage.getItem(key)); } catch { stored = 0; }
+  let ratio = Number.isFinite(stored) && stored >= 0.25 && stored <= 0.65 ? stored : ${rightbarRatio};
   let applied = false;
+  let autoDragging = false;
+  let manualHandle = null;
+  const handleOf = (event) => {
+    const target = event.target;
+    return target instanceof Element ? target.closest('[data-side="rightbar"]') : null;
+  };
+  const save = (event) => {
+    if (autoDragging) { manualHandle = null; return; }
+    const handle = handleOf(event) ?? manualHandle;
+    manualHandle = null;
+    if (handle === null) return;
+    const frame = handle.parentElement;
+    if (frame === null) return;
+    const rect = frame.getBoundingClientRect();
+    if (rect.width < 1024) return;
+    const next = (rect.right - event.clientX) / rect.width;
+    if (next < 0.25 || next > 0.65) return;
+    ratio = next;
+    try { localStorage.setItem(key, String(next)); } catch { /* private mode */ }
+  };
+  document.addEventListener('pointerdown', (event) => {
+    const handle = handleOf(event);
+    if (handle !== null) { applied = true; manualHandle = handle; }
+  }, true);
+  document.addEventListener('pointerup', save, true);
   const apply = () => {
     const handle = document.querySelector('[data-side="rightbar"]');
     if (handle === null) { applied = false; return; }
@@ -268,6 +296,7 @@ export function apply(ctx, config) {
     proto.setPointerCapture = function () {};
     proto.releasePointerCapture = function () {};
     try {
+      autoDragging = true;
       const start = handle.getBoundingClientRect().left + 4;
       const target = rect.right - desired + 4;
       const base = { bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1, clientY: 100 };
@@ -276,6 +305,7 @@ export function apply(ctx, config) {
       handle.dispatchEvent(new PointerEvent('pointerup', { ...base, clientX: target, buttons: 0 }));
       applied = true;
     } finally {
+      autoDragging = false;
       proto.setPointerCapture = setCapture;
       proto.releasePointerCapture = releaseCapture;
     }

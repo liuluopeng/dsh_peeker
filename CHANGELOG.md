@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.4 — 2026-10-19
+
+- Remember the right sidebar split. When you drag the `[data-side="rightbar"]` divider, the injected script stores the resulting ratio in `localStorage` (`lx-dsh-peek.rightbar-ratio`) and applies it on later loads. `rightbarRatio` is only the initial default when no stored value exists; the startup auto-adjust no longer overwrites the stored ratio. This lets you adjust once to any width you like.
+- Detect a manual drag from its pointerdown and save on pointerup, so the stored ratio still works when pointer capture sends the release to a different element.
+
 ## 0.6.3 — 2026-10-19
 
 - Revert the default `contentWidth` to `fill`. The centered 920px column was the wrong interpretation: it removed the side margins only by shrinking the text inside a still-wide pane.
