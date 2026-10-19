@@ -128,6 +128,12 @@ The plugin listens on `0.0.0.0:3082` and logs the LAN URLs at startup:
 
 Open that URL on a phone connected to the same Wi-Fi. There is no login and no key; the page is read-only and shows conversation and tool output to anyone who can reach the port. Use it only on a trusted LAN, do not port-forward it, and do not expose it from a machine with a public interface.
 
+### Terminal mode
+
+Open `http://<lan-ip>:3082/?terminal=1` for the lightest rendering path: the newest 60 items are formatted into one `<pre>` text buffer (capped at 32KB) with `你`, `DSH`, `思考`, `工具`, and `系统` prefixes. It uses one text node for the transcript instead of one styled card per event. The normal URL keeps the card view.
+
+The default card view creates one article per user/assistant message, tool call, and tool result; a long agent session can accumulate hundreds. Snapshots are trimmed to the newest 60 items before rendering, and terminal mode removes the per-item DOM entirely.
+
 ## Configuration
 
 Change the port, conversation width, or font sizes in `cordis.patch.yml`:

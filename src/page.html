@@ -109,6 +109,11 @@
     background: #f1f5f9; color: #334155; white-space: pre-wrap; word-break: break-word;
     font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   }
+  .terminal {
+    margin: 0; padding: 0; max-height: none; overflow: visible; border-radius: 0;
+    background: transparent; color: var(--text); white-space: pre-wrap; word-break: break-word;
+    font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
   .cursor { color: var(--accent); animation: blink 1s steps(2, start) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
   footer {
@@ -167,6 +172,10 @@
   // phone spend seconds building a 600-item snapshot; 60 is far more than the
   // visible page and keeps the initial render bounded.
   const MAX_RENDER_ITEMS = 60
+  // Terminal mode renders the transcript as one rolling text buffer instead of
+  // one styled DOM card per item. Enable it with ?terminal=1.
+  const TERMINAL = new URLSearchParams(location.search).get('terminal') !== null
+  const TERM_MAX = 32000
   const POLL_MS = 3000
   const JOB_KEEP_MS = 12000
   const JOB_OUTPUT_LIMIT = 12000
@@ -349,8 +358,59 @@
     })
   }
 
+  function terminalItemText(item) {
+    const at = timeOf(item.time)
+    if (item.kind === 'user') return `你 ${at}\n${item.text || ''}\n\n`
+    if (item.kind === 'assistant') {
+      const lines = [`DSH ${at}`]
+      if (item.reasoning) lines.push(`思考:\n${item.reasoning}`)
+      if (item.text) lines.push(item.text)
+      return `${lines.join('\n')}\n\n`
+    }
+    if (item.kind === 'tool') {
+      const head = `工具 ${item.name || 'tool'}${item.error ? '（错误）' : ''} ${at}`
+      const result = item.result === null || item.result === undefined ? '' : `\n输出:\n${item.result}`
+      return `${head}\n${item.args || ''}${result}\n\n`
+    }
+    if (item.kind === 'note') return `系统\n${item.text || ''}\n\n`
+    return ''
+  }
+
+  function renderTerminal(pane) {
+    if (pane.term === null) return
+    let text = pane.items.map(terminalItemText).join('')
+    if (text.length > TERM_MAX) text = text.slice(-TERM_MAX)
+    pane.termText = text
+    pane.termPlaceholder = text === ''
+    pane.termNode.nodeValue = text === '' ? (pane.snapshot ? '（暂无输出）\n' : '（等待输出…）\n') : text
+    pane.termLiveHeader = pane.live !== null
+    pane.termReasoningHeader = pane.live !== null && (pane.live.reasoning || '') !== ''
+    scrollBody(pane)
+  }
+
+  function appendTerm(pane, text) {
+    if (text === '' || pane.termNode === null) return
+    if (pane.termPlaceholder) {
+      pane.termText = ''
+      pane.termNode.nodeValue = ''
+      pane.termPlaceholder = false
+    }
+    pane.termText += text
+    if (pane.termText.length > TERM_MAX) {
+      pane.termText = pane.termText.slice(-TERM_MAX)
+      pane.termNode.nodeValue = pane.termText
+    } else {
+      pane.termNode.appendData(text)
+    }
+    scrollBody(pane)
+  }
+
   function renderPane(pane) {
     trimItems(pane)
+    if (TERMINAL) {
+      renderTerminal(pane)
+      return
+    }
     pane.body.textContent = ''
     pane.liveNode = null
     pane.liveToolNode = null
@@ -393,6 +453,14 @@
    */
   function appendLiveText(pane, text) {
     if (text === '' || pane.live === null) return
+    if (TERMINAL) {
+      if (pane.termLiveHeader !== true) {
+        appendTerm(pane, `\nDSH ${timeOf(Date.now())}\n`)
+        pane.termLiveHeader = true
+      }
+      appendTerm(pane, text)
+      return
+    }
     if (pane.liveNode === null) {
       renderPane(pane)
       return
@@ -411,6 +479,18 @@
 
   function appendLiveReasoning(pane, text) {
     if (text === '' || pane.live === null) return
+    if (TERMINAL) {
+      if (pane.termLiveHeader !== true) {
+        appendTerm(pane, `\nDSH ${timeOf(Date.now())}\n`)
+        pane.termLiveHeader = true
+      }
+      if (pane.termReasoningHeader !== true) {
+        appendTerm(pane, '思考:\n')
+        pane.termReasoningHeader = true
+      }
+      appendTerm(pane, text)
+      return
+    }
     if (pane.liveNode === null) {
       renderPane(pane)
       return
@@ -430,6 +510,22 @@
     const delta = typeof chunk.argumentsDelta === 'string' ? chunk.argumentsDelta : ''
     const callId = typeof chunk.id === 'string' ? chunk.id : ''
     const name = typeof chunk.name === 'string' ? chunk.name : ''
+    if (TERMINAL) {
+      let item = callId === '' ? undefined : pane.items.find((candidate) => candidate.kind === 'tool' && candidate.callId === callId)
+      if (item === undefined) {
+        item = {
+          kind: 'tool', name: name || 'tool', callId, args: '',
+          result: null, error: false, done: false, time: Date.now(),
+        }
+        pane.items.push(item)
+        appendTerm(pane, `\n工具 ${item.name} ${timeOf(item.time)}\n`)
+      } else {
+        item.name = name || item.name
+      }
+      item.args += delta
+      appendTerm(pane, delta)
+      return
+    }
     let live = pane.liveTool
     if (live === null || (callId !== '' && live.item.callId !== callId)) {
       const item = {
@@ -951,11 +1047,21 @@
       running: session.running === true, streamState: streamOpen ? 'open' : 'connecting',
       items: [], live: null, liveNode: null, liveTool: null, liveToolNode: null, snapshot: false,
       createdAt: Date.now(), reopenedEmpty: false,
+      term: null, termNode: null, termText: '', termPlaceholder: false, termLiveHeader: false, termReasoningHeader: false,
       startedAt: 0, jobs: new Map(), jobsEl, elapsedEl: elapsed,
       root, titleEl: title, dotEl: dot, statusEl: status, body,
     }
     panes.set(pane.id, pane)
     dismissed.delete(pane.id)
+    if (TERMINAL) {
+      const term = el('pre', 'terminal')
+      const node = document.createTextNode('')
+      term.append(node)
+      pane.term = term
+      pane.termNode = node
+      body.append(term)
+      renderTerminal(pane)
+    }
     paintPane(pane)
     updateLayout()
     return pane

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.15 — 2026-10-18
+
+- Add an optional terminal renderer at `/?terminal=1`. It formats the newest 60 items into one `<pre>` text buffer (32KB cap) with `你` / `DSH` / `思考` / `工具` / `系统` prefixes, so a pane uses one text node instead of one styled card per event. The normal URL keeps the card view.
+
 ## 0.5.14 — 2026-10-18
 
 - Trim snapshot transcripts to the newest 60 items before rendering. The pane is a tail-only viewport; building all 600 historical items on a phone could block the main thread and leave the pane showing only `运行中`.
