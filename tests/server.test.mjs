@@ -91,6 +91,17 @@ const ctx = {
             },
           },
         ],
+        assistantStream: {
+          revision: 1,
+          activeAttempt: {
+            attemptId: 'attempt-test',
+            startedAfterSeq: 0,
+            turn: 1,
+            step: 1,
+            nextIndex: 1,
+            stream: [{ time: Date.now(), chunk: { type: 'text-delta', text: 'partial-test' } }],
+          },
+        },
       }
       await sleep(20)
       if (signal.aborted) return
@@ -165,6 +176,7 @@ test('serves the light single-page peek UI', async () => {
   assert.match(body, /lastStreamAt/)
   assert.match(body, /appendLiveText/)
   assert.match(body, /appendLiveReasoning/)
+  assert.match(body, /hydrateAssistantStream/)
   assert.match(body, /scrollBody\(pane\)/)
   assert.match(body, /flashTimer/)
   assert.match(body, /#fff/)
@@ -259,6 +271,8 @@ test('streams a snapshot, deltas, and a completion flash', async () => {
       body += decoder.decode(value, { stream: true })
     }
     assert.match(body, /"t":"snapshot"/)
+    assert.match(body, /"assistantStream"/)
+    assert.match(body, /partial-test/)
     assert.match(body, /"t":"delta"/)
     assert.match(body, /"t":"jobs"/)
     assert.match(body, /"t":"job-output"/)

@@ -415,7 +415,12 @@ export function apply(ctx, config) {
           if (controller.signal.aborted || disposed) break
           if (frame?.type === 'snapshot') {
             const fitted = fitSnapshot(frame.records)
-            emit(sessionId, { t: 'snapshot', records: fitted.records, dropped: fitted.dropped })
+            emit(sessionId, {
+              t: 'snapshot',
+              records: fitted.records,
+              dropped: fitted.dropped,
+              ...(frame.assistantStream === undefined ? {} : { assistantStream: frame.assistantStream }),
+            })
           } else if (frame?.type === 'event') {
             emit(sessionId, { t: 'event', event: shrink(trimEvent(frame.event)) })
             if (frame.event?.type === 'turn/end') emit(sessionId, { t: 'flash', times: 3 })

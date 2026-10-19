@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.11 — 2026-10-18
+
+- Forward the follow snapshot's `assistantStream` baseline and hydrate the in-progress assistant text/reasoning from it. A stream reconnect or a page load in the middle of an answer now restores the partial response instead of resetting the transcript to the durable records and showing nothing until the final message. This is the missing piece behind the phone showing a few seconds of text and then appearing empty after a reconnect.
+
 ## 0.5.10 — 2026-10-18
 
 - Replace the subtle yellow opacity pulse with a full-screen black/white completion flash. The overlay starts black, switches to white after one second, and alternates every second for three black phases (six phases total), then hides. Vibration is unchanged.

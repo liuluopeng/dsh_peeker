@@ -731,6 +731,30 @@
     scrollPane(pane)
   }
 
+  /**
+   * Restore the in-progress assistant attempt from the follow snapshot's
+   * `assistantStream` baseline. Without this, a reconnect mid-answer erased
+   * the partial text and the pane stayed empty until the final message.
+   */
+  function hydrateAssistantStream(pane, baseline) {
+    const stream = baseline?.activeAttempt?.stream
+    if (!Array.isArray(stream) || stream.length === 0) return
+    let text = ''
+    let reasoning = ''
+    for (const entry of stream) {
+      const chunk = entry?.chunk
+      if (!chunk) continue
+      if (chunk.type === 'text-delta') text += chunk.text || ''
+      else if (chunk.type === 'reasoning-delta') reasoning += chunk.text || ''
+    }
+    if (text === '' && reasoning === '') return
+    const live = ensureLive(pane)
+    live.text = text
+    live.reasoning = reasoning
+    live.live = true
+    live.streamed = true
+  }
+
   function handlePane(pane, payload) {
     if (!payload || typeof payload !== 'object') return
     if (payload.t === 'snapshot') {
@@ -743,6 +767,7 @@
       for (const record of Array.isArray(payload.records) ? payload.records : []) {
         if (record && record.type === 'event' && record.event) applyEvent(pane, record.event, true)
       }
+      hydrateAssistantStream(pane, payload.assistantStream)
       pane.streamState = 'open'
       paintPane(pane)
       renderPane(pane)

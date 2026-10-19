@@ -1,7 +1,7 @@
 {
   "name": "lx_dsh_peek",
-  "version": "0.5.10",
-  "description": "Read-only, no-input, light-themed LAN peek at active DSH sessions, plus host-injected font and full-pane conversation-width overrides for the official DSH UI (no patched DMG). Live reasoning with incremental delta rendering, background-command output, animated running state, tail-only panes with hidden scrollbars, one multiplexed SSE with heartbeat recovery, subagent-aware follow, live turn/end dismissal with a black/white completion flash, 1/2/3/4 panes and orientation-aware layout.",
+  "version": "0.5.11",
+  "description": "Read-only, no-input, light-themed LAN peek at active DSH sessions, plus host-injected font and full-pane conversation-width overrides for the official DSH UI (no patched DMG). Live reasoning with incremental delta rendering and reconnect baseline hydration, background-command output, animated running state, tail-only panes with hidden scrollbars, one multiplexed SSE with heartbeat recovery, subagent-aware follow, live turn/end dismissal with a black/white completion flash, 1/2/3/4 panes and orientation-aware layout.",
   "type": "module",
   "main": "src/index.js",
   "exports": {
