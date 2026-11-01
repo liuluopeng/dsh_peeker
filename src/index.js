@@ -16,6 +16,8 @@ import { readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { networkInterfaces } from 'node:os'
 
+import { createZcodeSource, isZcodeSessionId, ZCODE_PREFIX } from './zcode.js'
+
 /** Plugin name used by Cordis diagnostics and loader display. */
 export const name = 'lx-dsh-peek'
 
@@ -65,6 +67,9 @@ function trimEvent(event) {
 
 const MAX_TEXT = 4000
 const MAX_SNAPSHOT_BYTES = 1_200_000
+
+/** Length of the `z:` prefix that marks a ZCode session id. */
+const ZCODE_PREFIX_LENGTH = 2
 
 /** Bound one JSON value so a long tool output cannot make the phone wait forever. */
 function shrink(value, depth = 0) {
@@ -203,6 +208,20 @@ export function apply(ctx, config) {
   if (!Number.isInteger(composerHeight) || (composerHeight !== 0 && (composerHeight < 80 || composerHeight > 600))) {
     throw new Error(`lx_dsh_peek: composerHeight must be 0 (official height) or an integer from 80 to 600, got ${JSON.stringify(config?.composerHeight)}`)
   }
+  if (config?.zcode !== undefined && typeof config.zcode !== 'boolean') {
+    throw new Error(`lx_dsh_peek: zcode must be a boolean, got ${JSON.stringify(config.zcode)}`)
+  }
+  if (config?.zcodeDbPath !== undefined && (typeof config.zcodeDbPath !== 'string' || config.zcodeDbPath.trim() === '')) {
+    throw new Error(`lx_dsh_peek: zcodeDbPath must be a non-empty string, got ${JSON.stringify(config.zcodeDbPath)}`)
+  }
+  // ZCode sessions come from the ZCode app's own SQLite store, read-only. The
+  // source never throws into the DSH paths; all of its failures degrade to
+  // "no ZCode sessions" with a throttled log line.
+  const zcode = createZcodeSource({
+    enabled: config?.zcode !== false,
+    dbPath: config?.zcodeDbPath,
+    log: (message) => console.error(`[lx-dsh-peek] zcode: ${message}`),
+  })
   const fontStyle = `:root, body {
   --dsh-content-font-size: ${fontSize}px !important;
   --dsh-code-font-size: ${codeFontSize}px !important;
@@ -252,6 +271,8 @@ export function apply(ctx, config) {
     return () => { if (typeof off === 'function') off() }
   }, 'lx-dsh-peek:official-ui-overrides')
 
+  ctx.effect(() => () => zcode.dispose(), 'lx-dsh-peek:zcode-source')
+
   async function handle(req, res) {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`)
     if (req.method !== 'GET') {
@@ -269,7 +290,16 @@ export function apply(ctx, config) {
     }
     if (url.pathname === '/api/sessions') {
       try {
-        sendJson(res, 200, { items: await listSessions(ctx) })
+        // Each source degrades independently: a DSH Controller failure must
+        // not hide ZCode sessions and vice versa.
+        const [items, zcodeItems] = await Promise.all([
+          listSessions(ctx).catch((error) => {
+            console.error(`[lx-dsh-peek] dsh session list failed: ${String(error?.message ?? error)}`)
+            return []
+          }),
+          zcode.list().catch(() => []),
+        ])
+        sendJson(res, 200, { items: [...items, ...zcodeItems] })
       } catch (error) {
         sendJson(res, 500, { error: String(error?.message ?? error) })
       }
@@ -359,6 +389,14 @@ export function apply(ctx, config) {
     const sessionId = url.searchParams.get('sessionId') ?? ''
     if (sessionId === '') {
       sendJson(res, 400, { error: 'missing sessionId' })
+      return
+    }
+    if (isZcodeSessionId(sessionId)) {
+      // A ZCode snapshot fails soft: an empty transcript keeps the pane usable
+      // for the live watcher instead of surfacing a store error on the phone.
+      const records = await zcode.bootstrap(sessionId.slice(ZCODE_PREFIX_LENGTH))
+      const fitted = fitSnapshot(records)
+      sendJson(res, 200, { records: fitted.records, dropped: fitted.dropped })
       return
     }
     const parentSessionId = url.searchParams.get('parentSessionId') ?? ''
@@ -509,8 +547,42 @@ export function apply(ctx, config) {
         stopJobs()
       }
     }
+    /**
+     * ZCode sessions have no Host follow stream; one watcher polls the ZCode
+     * store for all of this connection's `z:` entries and synthesizes the same
+     * event/delta frames. A finished turn carries its own flash frame.
+     */
+    const followZcode = async (rawIds) => {
+      if (rawIds.length === 0) return
+      const controller = new AbortController()
+      controllers.set(rawIds.join('\u0000'), controller)
+      const zcodeEmit = (rawId, payload) => {
+        if (payload?.t === 'event') payload = { ...payload, event: shrink(trimEvent(payload.event)) }
+        emit(`${ZCODE_PREFIX}${rawId}`, payload)
+        if (payload?.t === 'event' && payload.event?.type === 'turn/end') {
+          emit(`${ZCODE_PREFIX}${rawId}`, { t: 'flash', times: 3 })
+        }
+      }
+      try {
+        await zcode.watch(rawIds, zcodeEmit, controller.signal)
+      } catch (error) {
+        if (!controller.signal.aborted && !disposed) {
+          for (const rawId of rawIds) emit(`${ZCODE_PREFIX}${rawId}`, { t: 'error', message: String(error?.message ?? error) })
+        }
+      } finally {
+        controllers.delete(rawIds.join('\u0000'))
+      }
+    }
     try {
-      await Promise.all(entries.map(({ sessionId, parentSessionId }) => followSession(sessionId, parentSessionId)))
+      const zcodeIds = entries
+        .filter(({ sessionId }) => isZcodeSessionId(sessionId))
+        .map(({ sessionId }) => sessionId.slice(ZCODE_PREFIX_LENGTH))
+      await Promise.all([
+        ...entries
+          .filter(({ sessionId }) => !isZcodeSessionId(sessionId))
+          .map(({ sessionId, parentSessionId }) => followSession(sessionId, parentSessionId)),
+        followZcode(zcodeIds),
+      ])
       if (!closed && !disposed) {
         for (const { sessionId } of entries) emit(sessionId, { t: 'end' })
       }

@@ -1,10 +1,11 @@
 # lx_dsh_peek
 
-A deliberately small, read-only, **light** LAN view of the active DSH sessions.
+A deliberately small, read-only, **light** LAN view of the active DSH sessions — and of the active ZCode tasks on the same machine.
 
 - No PIN, no path secret, no relay, no account.
 - No input endpoints and no page input: the Host plugin only calls `sessionController.list()` and `sessionController.follow()`; the page disables scrolling, zoom, selection, context menus, drags, and taps.
 - Autodiscovers active (running) sessions every 3 seconds; there is no session picker. Subagent children are included and followed with their durable parent address, so their panes show the child transcript instead of failing to connect.
+- ZCode tasks run in the ZCode app appear on the same page with live reasoning/text/tool streaming and the same completion flash; recently finished ZCode tasks stay listed (✓/✗ + time) so a missed flash still answers "完成了没有". See the [ZCode sessions](#zcode-sessions) section.
 - Auto-expands assistant reasoning as it streams. Text and reasoning deltas are appended to the live node incrementally, so a long answer does not rebuild the whole transcript on every token. A reconnect or mid-turn page load restores the in-progress answer from the snapshot's `assistantStream` baseline instead of clearing the pane.
 - Tool calls are rendered from `tool-call-delta` and the same baseline. A tool-only turn shows the action name/arguments immediately instead of an empty pane, and reasoning that ends when a tool call begins no longer looks truncated without a following action row.
 - Every pane shows only its newest page and stays pinned to its tail. The transcript, job band, and tool output are paged programmatically; the reader cannot scroll them and no scrollbar is rendered. Snapshots are trimmed to the newest 60 items before rendering, and a running pane that still has no visible content after four seconds reconnects once automatically.
@@ -123,6 +124,29 @@ For a package installed from GitHub, do not edit files under `node_modules`. Put
     composerHeight: 200
 ```
 
+## ZCode sessions
+
+The plugin also watches ZCode (the desktop coding agent) without any ZCode-side setup. ZCode persists every session in `~/.zcode/cli/db/db.sqlite` (WAL mode); the plugin opens that file read-only with Node's built-in `node:sqlite` — no new dependencies, no ZCode plugin, no relay. ZCode sessions are listed under ids prefixed `z:`, so they never collide with DSH session ids.
+
+- A ZCode task is "running" when its store was touched in the last 90 seconds, or its newest assistant message has no `time.completed` yet — that row is written when generation starts and marked only when the turn settles, so a long quiet build or tool run still counts as running. Sessions idle longer than 30 minutes with an unfinished message (a crashed turn) are not shown.
+- The transcript is mapped onto the same events the page already renders: user/assistant messages, reasoning, tool calls and their outputs. An in-flight assistant message's text and reasoning are deliberately left out of the bootstrap and stream in as live deltas right after attach, which also gives mid-turn reconnects the streaming cursor instead of a pasted paragraph.
+- When a watched task's turn settles, the stream emits the same live `turn/end` as DSH: the pane flashes three times, vibrates where allowed, and disappears. Because ZCode writes `last_outcome` (`completed` / `error` / `interrupted`), tasks that finished in the last 30 minutes stay listed in one muted line under the header — open the page late and it still answers whether the task succeeded.
+- Everything degrades silently: if `node:sqlite` is unavailable (the DSH runtime ships Node ≥ 22.5, so it is), the store is missing, or a read fails, ZCode simply contributes no sessions and DSH keeps working.
+
+Config rows (both optional; ZCode support is on by default):
+
+```yaml
+config:
+  # false turns the ZCode source off entirely.
+  zcode: true
+  # Override when ZCode uses a non-default data root. Default: ~/.zcode/cli/db/db.sqlite
+  zcodeDbPath: /Volumes/six/zcode/cli/db/db.sqlite
+```
+
+For a GitHub install, put the same rows in `~/.dsh/profiles/desktop/cordis.patch.yml` under the `lx-dsh-peek` id instead of editing `node_modules`.
+
+The peek page is still fully read-only; the ZCode store is opened with SQLite read-only mode, and all queries are plain SELECTs.
+
 ## Open
 
 The plugin listens on `0.0.0.0:3082` and logs the LAN URLs at startup:
@@ -167,20 +191,21 @@ Change the port, conversation width, or font sizes in `cordis.patch.yml`:
 
 ## Development
 
-No runtime dependencies; the plugin uses only Node built-ins.
+No runtime dependencies; the plugin uses only Node built-ins (`node:sqlite` needs Node ≥ 22.5 for the ZCode source; without it the rest still works).
 
 ```sh
-node --test tests/server.test.mjs
+node --test tests/server.test.mjs tests/zcode.test.mjs
 ```
 
-The test boots the plugin with a mock `sessionController` and `jobController`, checks the page (including its no-input, hidden-scrollbar, tail-only markers), session listing, the SSE snapshot/delta/job-output/flash stream, multiplexing two sessions over one tagged stream, the read-only response, the injected official-UI font and conversation-width styles, and invalid-width rejection. The page uses CSS `@media (orientation: landscape)` for layout and `matchMedia` for the footer's `竖屏`/`横屏` label.
+The first test boots the plugin with a mock `sessionController` and `jobController`, checks the page (including its no-input, hidden-scrollbar, tail-only markers), session listing, the SSE snapshot/delta/job-output/flash stream, multiplexing two sessions over one tagged stream, the read-only response, the injected official-UI font and conversation-width styles, and invalid-width rejection. The second builds a temporary SQLite store with ZCode's schema, seeds a running task (in-flight assistant message, streaming text part, running tool part) and a finished one, and asserts the merged session list, the bootstrap event mapping, and the watcher's live deltas plus its completion flash. The page uses CSS `@media (orientation: landscape)` for layout and `matchMedia` for the footer's `竖屏`/`横屏` label.
 
 ### Layout
 
-- `src/index.js` — Host plugin, HTTP/SSE listener, session listing and snapshot budget, optional `jobController` forwarding, multiplexed per-session frames, official-UI font/width style injection.
-- `src/page.html` — light mobile page, active-task panes, one shared SSE connection, orientation layout, flash.
+- `src/index.js` — Host plugin, HTTP/SSE listener, session listing and snapshot budget, optional `jobController` forwarding, multiplexed per-session frames, official-UI font/width style injection, ZCode source wiring.
+- `src/zcode.js` — read-only ZCode adapter over `~/.zcode/cli/db/db.sqlite`: running detection, snapshot mapping, store-polling watcher.
+- `src/page.html` — light mobile page, active-task panes, one shared SSE connection, orientation layout, flash, recently-finished strip.
 - `cordis.patch.yml` — bundle layer that inserts the `lx-dsh-peek` row.
-- `tests/server.test.mjs` — keyless mock test.
+- `tests/server.test.mjs`, `tests/zcode.test.mjs` — keyless mock tests.
 
 ## License
 

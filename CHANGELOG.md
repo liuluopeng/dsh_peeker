@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.0 — 2026-11-01
+
+- Add ZCode support: tasks running in the ZCode app now appear on the same LAN page. The plugin opens ZCode's own store (`~/.zcode/cli/db/db.sqlite`) read-only with built-in `node:sqlite` (the DSH runtime ships Node 24, so no new dependencies) and maps sessions onto the existing event model with `z:`-prefixed ids. A task is running while its store was touched within 90 s or its newest assistant message lacks `time.completed` (covers long quiet tool runs); the transcript streams as live reasoning/text deltas and tool call/result rows. When a watched turn settles, the page plays the same three-phase completion flash and drops the pane. Tasks finished in the last 30 minutes stay listed in a muted strip under the header (✓ 完成 / ✗ 出错 / ⏸ 中断 + time), so opening the page late still answers whether the task succeeded. Assistant labels read `ZCODE` on ZCode panes, including terminal mode. Every ZCode failure degrades to "no ZCode sessions" without touching the DSH paths; `zcode: false` turns the source off and `zcodeDbPath` overrides the store path. New `tests/zcode.test.mjs` seeds a temporary store with ZCode's schema and covers the merged list, bootstrap mapping, live deltas, and the completion flash.
+
 ## 0.6.8 — 2026-10-19
 
 - Roll back the right-sidebar split experiments at the user's request. Removed `rightbarRatio`, the injected rightbar CSS/script, the remembered-ratio localStorage key handling, and the frame tagging. DSH's own right-sidebar width is left untouched, so the conversation content stays `contentWidth: fill` and the text column remains full. Composer height, HTTP bootstrap, terminal mode, and all peek fixes remain.

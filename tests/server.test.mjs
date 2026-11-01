@@ -130,7 +130,9 @@ const ctx = {
 }
 
 before(async () => {
-  apply(ctx, { port })
+  // ZCode support is exercised by tests/zcode.test.mjs with its own store;
+  // here it stays off so the DSH session list is exactly the mock's two rows.
+  apply(ctx, { port, zcode: false })
   for (let attempt = 0; attempt < 50; attempt += 1) {
     try {
       const response = await fetch(`${base}/api/health`)
@@ -195,6 +197,11 @@ test('serves the light single-page peek UI', async () => {
   assert.doesNotMatch(body, /#ffe066/)
   assert.doesNotMatch(body, /flashEl\.animate/)
   assert.match(body, /font: 15px/)
+  // ZCode panes share the page: source-aware labels and the recently-finished strip.
+  assert.match(body, /pane\.zcode === true \? 'ZCODE' : 'DSH'/)
+  assert.match(body, /renderRecent/)
+  assert.match(body, /id="recent"/)
+  assert.match(body, /在 DSH 或 ZCode 里开始任务/)
 })
 
 test('injects the official UI font, taller composer, and conversation-width overrides', () => {
