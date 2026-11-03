@@ -22,6 +22,7 @@
  * ZCode support must never break the DSH paths.
  */
 
+import { stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -33,8 +34,10 @@ const RUNNING_FRESH_MS = 90_000
 const INFLIGHT_MAX_MS = 30 * 60_000
 /** Recently finished sessions stay listed for the completion strip. */
 const RECENT_KEEP_MS = 30 * 60_000
-/** Store poll period while a stream watches ZCode sessions. */
+/** Store poll fallback period while a stream watches ZCode sessions; real wakes come from the stat loop. */
 const POLL_MS = 1500
+/** Store stat cadence: one cheap syscall; bounds the write-to-poll latency. */
+const STAT_POLL_MS = 150
 /** Bootstrap reads this many newest messages. */
 const BOOTSTRAP_MESSAGES = 60
 /** The watcher re-scans this many newest messages per poll. */
@@ -334,23 +337,36 @@ export function createZcodeSource({ enabled = true, dbPath, log = () => {} } = {
    * frames the DSH follow path emits: `event`, `delta`, and on completion the
    * live `turn/end` (the caller adds the flash frame).
    *
-   * The first poll seeds silently — the page has already bootstrapped the
-   * transcript over HTTP — except for the in-flight message, whose text is
+   * Polling is change-driven: the wait loop stats the store files and returns
+   * as soon as one changed, so a ZCode commit reaches the page in ~150 ms
+   * instead of a fixed second-and-a-half. A `PRAGMA data_version` check makes
+   * content sync skip cycles where nothing was written; running-state
+   * transitions are checked on every cycle either way.
+   *
+   * The first poll seeds silently — the page gets its history from this same
+   * stream's snapshot frame — except for the in-flight message, whose text is
    * streamed from zero on purpose (see `bootstrap`).
    */
   async function watch(rawIds, emit, signal) {
     const states = new Map()
     for (const rawId of rawIds) states.set(rawId, { seeded: false, wasRunning: false, msgs: new Map(), parts: new Map() })
+    let lastDataVersion = null
+    let fingerprint = await storeFingerprint()
     while (!signal.aborted && !closed) {
+      const version = await dataVersion()
+      // A null version (no store, read failure) polls anyway: correctness
+      // before thrift.
+      const contentDirty = version === null || lastDataVersion === null || version !== lastDataVersion
+      lastDataVersion = version
       for (const [rawId, state] of states) {
         if (signal.aborted || closed) break
         try {
-          await pollSession(rawId, state, emit)
+          await pollSession(rawId, state, emit, contentDirty)
         } catch (error) {
           logError(`zcode watch failed: ${error?.message ?? error}`)
         }
       }
-      await sleep(POLL_MS, signal)
+      fingerprint = await waitUntilStoreChanges(signal, fingerprint, POLL_MS)
     }
   }
 
@@ -361,7 +377,56 @@ export function createZcodeSource({ enabled = true, dbPath, log = () => {} } = {
     })
   }
 
-  async function pollSession(rawId, state, emit) {
+  // ── Store change detection ─────────────────────────────────────────────────
+  // ZCode has no subscribable event API (its only external IPC is a lifecycle
+  // control socket; the realtime port is in-process for multi-host mirroring),
+  // so the watcher detects store writes itself. fs.watch cannot carry it: on
+  // macOS a kqueue directory watch fires for entry creation/removal but not
+  // for SQLite's pwrite appends into an existing WAL, so steady-state
+  // streaming would never wake it. Instead the wait loop stats the store
+  // files every ~150 ms — one cheap syscall — and a mtime/size change wakes
+  // the poll; a `PRAGMA data_version` check stays as the second opinion for
+  // writes a same-millisecond, same-size stat could miss.
+  const STORE_SUFFIXES = ['', '-wal', '-journal', '-shm']
+
+  async function storeFingerprint() {
+    const parts = []
+    for (const suffix of STORE_SUFFIXES) {
+      try {
+        const stats = await stat(file + suffix)
+        parts.push(`${stats.mtimeMs}:${stats.size}`)
+      } catch {
+        parts.push('-')
+      }
+    }
+    return parts.join('|')
+  }
+
+  /** Stat-wait until a store file changed, the fallback fires, or abort. */
+  async function waitUntilStoreChanges(signal, known, fallbackMs) {
+    const deadline = Date.now() + fallbackMs
+    while (!signal.aborted && !closed) {
+      const current = await storeFingerprint()
+      if (current !== known) return current
+      if (Date.now() >= deadline) return known
+      await sleep(STAT_POLL_MS, signal)
+    }
+    return known
+  }
+
+  /** Cheap liveness check: advances whenever another connection commits. */
+  async function dataVersion() {
+    const db = await connect()
+    if (db === null) return null
+    try {
+      const row = db.prepare('PRAGMA data_version').get()
+      return Number(row?.data_version) || null
+    } catch {
+      return null
+    }
+  }
+
+  async function pollSession(rawId, state, emit, contentDirty) {
     const now = Date.now()
     const session = await sessionRow(rawId)
     if (session === undefined) {
@@ -386,10 +451,11 @@ export function createZcodeSource({ enabled = true, dbPath, log = () => {} } = {
       emit(rawId, { t: 'event', event: { type: 'turn/start', time: now, data: {} } })
     }
     const wasRunning = state.wasRunning
-    // Content is synced on every poll of a running turn — and on the poll that
-    // notices completion, so the final assistant message lands before the
-    // turn/end that destroys the pane.
-    if (live.running || wasRunning) {
+    // Content is synced on every dirty poll of a running turn — and on the
+    // poll that notices completion, so the final assistant message lands
+    // before the turn/end that destroys the pane. Clean cycles (no writes
+    // anywhere in the store) only recheck running-state transitions.
+    if ((live.running || wasRunning) && (contentDirty || first)) {
       const tail = (await query(
         `SELECT id, data, time_created, time_updated FROM message
          WHERE session_id = ? ORDER BY time_created DESC LIMIT ?`,
@@ -475,8 +541,9 @@ export function createZcodeSource({ enabled = true, dbPath, log = () => {} } = {
   /**
    * Emit tool calls and results for every tail message. Calls repeat when the
    * streamed input grows — the page updates its existing item by callId. On
-   * the seed poll only the in-flight message's parts are surfaced, because
-   * bootstrap already emitted the completed ones.
+   * the seed poll every tail part is recorded (bootstrap already emitted the
+   * completed ones into the snapshot), but only the in-flight message's parts
+   * are surfaced as live frames.
    */
   async function emitToolTransitions(rawId, emit, tail, state, seedMessageId) {
     if (tail.length === 0) return
@@ -487,21 +554,23 @@ export function createZcodeSource({ enabled = true, dbPath, log = () => {} } = {
       ...tail.map((message) => message.id),
     )
     for (const part of parts) {
-      if (seedMessageId !== undefined && part.message_id !== seedMessageId) continue
+      const emitThis = seedMessageId === undefined || part.message_id === seedMessageId
       const data = safeParse(part.data)
       if (data.type !== 'tool') continue
       const status = data.state?.status
       const done = status === 'completed' || status === 'error'
       const tracked = state.parts.get(part.id) ?? { textLen: 0, reasonLen: 0, inputJson: '', resultEmitted: false }
       const inputJson = JSON.stringify(data.state?.input ?? null)
-      if (tracked.inputJson !== inputJson && !(done && tracked.resultEmitted)) {
-        tracked.inputJson = inputJson
+      if (emitThis && tracked.inputJson !== inputJson && !(done && tracked.resultEmitted)) {
         emit(rawId, { t: 'event', event: toolCallEvent(part, data, Number(part.time_created) || Date.now()) })
       }
       if (done && !tracked.resultEmitted) {
         tracked.resultEmitted = true
-        emit(rawId, { t: 'event', event: toolResultEvent(part, data, Number(part.time_updated) || Date.now()) })
+        if (emitThis) {
+          emit(rawId, { t: 'event', event: toolResultEvent(part, data, Number(part.time_updated) || Date.now()) })
+        }
       }
+      tracked.inputJson = inputJson
       state.parts.set(part.id, tracked)
     }
   }

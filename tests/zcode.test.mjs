@@ -81,6 +81,9 @@ const modelOnly = 'msg-model-only'
 
 function seed() {
   db.exec(SCHEMA)
+  // Production ZCode runs the store in WAL mode; mirror that so the watcher
+  // sees the same file churn (appends to db.sqlite-wal) as the real app.
+  db.exec('PRAGMA journal_mode = WAL')
   // The running task: a finished step, then an in-flight assistant message
   // (no `time.completed`) with a streaming text part and a running tool part.
   insertSession(runningSession, 'Z 活跃任务', now - 5_000)
@@ -120,6 +123,7 @@ function seed() {
 }
 
 const listeners = []
+const disposers = []
 const fakeCtx = {
   get() {
     return undefined
@@ -128,9 +132,12 @@ const fakeCtx = {
     listeners.push({ event, listener })
     return () => {}
   },
+  // The real Host keeps every registered effect; a single-slot overwrite
+  // would leak the ZCode fs watcher and hold this test process open forever.
   effect(fn) {
-    dispose = fn()
-    return dispose
+    const off = fn()
+    disposers.push(off)
+    return off
   },
 }
 
@@ -152,7 +159,9 @@ before(async () => {
 })
 
 after(() => {
-  dispose()
+  for (const off of disposers.reverse()) {
+    try { off() } catch { /* already gone */ }
+  }
   try { db.close() } catch { /* already gone */ }
   rmSync(dir, { recursive: true, force: true })
 })
