@@ -166,9 +166,9 @@ The default card view creates one article per user/assistant message, tool call,
 ### Transport
 
 - `GET /api/sessions` every 3 seconds discovers active sessions.
-- `GET /api/bootstrap?sessionId=…` (and `parentSessionId=…` for subagents) returns the initial history and the in-progress `assistantStream` baseline as ordinary JSON.
-- One shared `GET /api/stream` SSE connection carries only live events and deltas (plus a `ready` frame and data heartbeats). The initial transcript is deliberately not sent over SSE: a large one-shot SSE write can be buffered by mobile networks/proxies until more data arrives, which looks like a pane stuck on `运行中`.
-- There is no WebSocket. For a read-only monitor, server-to-client SSE plus a normal HTTP bootstrap is simpler and reconnects automatically; bidirectional remote control needs a WebSocket/Gateway or relay instead.
+- `GET /api/bootstrap?sessionId=…` (and `parentSessionId=…` for subagents) still returns the initial history as ordinary JSON, but the page no longer needs it: the live stream opens with the history itself.
+- One shared `GET /api/stream` SSE connection carries everything for the visible sessions, in a single ordered sequence per connection: the follow **snapshot first** (chunked into small `final:false` frames of ≤20 records plus a `final:true` frame carrying the `assistantStream` baseline), then durable events with their dense `seq`, assistant-stream deltas with `attemptId`/`index`, job frames, data pings every 5 s, and the `turn/end` flash. The page drops `seq ≤ lastSeq`, resyncs by reopening on a gap or a skipped chunk index, and commits each streamed draft to its durable row by shared `turn`/`step` — the same ordering discipline the official web client and DSH Go follow, which is what keeps a suspended phone or a flaky LAN from scrambling the transcript.
+- There is no WebSocket. For a read-only monitor, server-to-client SSE plus chunked in-stream snapshots reconnects automatically; bidirectional remote control needs a WebSocket/Gateway or relay instead.
 
 ## Configuration
 

@@ -24,6 +24,13 @@ const sessions = [
     running: true,
     projections: { values: { 'session/title': 'Subagent task' } },
   },
+  {
+    sessionId: 'session-bulk',
+    cwd: '/tmp/demo',
+    updatedAt: Date.now() - 2000,
+    running: true,
+    projections: { values: { 'session/title': 'Bulk task' } },
+  },
 ]
 
 const jobStartedAt = Date.now()
@@ -78,6 +85,21 @@ const ctx = {
     async *follow(request, signal) {
       followAddresses.push(request.address)
       const id = request.address.kind === 'session' ? request.address.sessionId : request.address.childSessionId
+      if (id === 'session-bulk') {
+        yield {
+          type: 'snapshot',
+          cursor: 25,
+          records: Array.from({ length: 25 }, (_, index) => ({
+            type: 'event',
+            event: { type: 'user/message', seq: index + 1, time: Date.now(), data: { content: [{ type: 'text', text: `m${index}` }] } },
+          })),
+        }
+        await new Promise((resolve) => {
+          if (signal.aborted) resolve()
+          else signal.addEventListener('abort', resolve, { once: true })
+        })
+        return
+      }
       yield {
         type: 'snapshot',
         records: [
@@ -179,8 +201,6 @@ test('serves the light single-page peek UI', async () => {
   assert.match(body, /appendLiveText/)
   assert.match(body, /appendLiveReasoning/)
   assert.match(body, /hydrateAssistantStream/)
-  assert.match(body, /bootstrapPane/)
-  assert.match(body, /\/api\/bootstrap/)
   assert.match(body, /handleToolCallDelta/)
   assert.match(body, /tool-call-delta/)
   assert.match(body, /MAX_RENDER_ITEMS/)
@@ -202,6 +222,16 @@ test('serves the light single-page peek UI', async () => {
   assert.match(body, /renderRecent/)
   assert.match(body, /id="recent"/)
   assert.match(body, /在 DSH 或 ZCode 里开始任务/)
+  // dsh-Go-parity ordering discipline: snapshot-first chunks, dense seq gating,
+  // per-attempt drafts committed by rowKey, and trim that keeps running tools.
+  assert.match(body, /gateEvent/)
+  assert.match(body, /pane\.lastSeq/)
+  assert.match(body, /pane\.resyncing/)
+  assert.match(body, /attemptId/)
+  assert.match(body, /draft\.commitSeq/)
+  assert.match(body, /draft\.turn === turn && draft\.step === step/)
+  assert.match(body, /pendingSnapshot/)
+  assert.match(body, /done !== true\) from -= 1/)
 })
 
 test('injects the official UI font, taller composer, and conversation-width overrides', () => {
@@ -272,7 +302,7 @@ test('lists sessions and refuses writes', async () => {
   assert.equal(response.status, 200)
   assert.equal(response.headers.get('connection'), 'close')
   const body = await response.json()
-  assert.equal(body.items.length, 2)
+  assert.equal(body.items.length, 3)
   assert.equal(body.items[0].title, 'Test task')
   assert.equal(body.items[0].running, true)
   const subagent = body.items.find((item) => item.sessionId === 'session-subagent')
@@ -294,7 +324,7 @@ test('serves the initial transcript over plain HTTP bootstrap', async () => {
   assert.equal(body.assistantStream.activeAttempt.stream[0].chunk.text, 'partial-test')
 })
 
-test('streams live deltas and a completion flash without an SSE snapshot', async () => {
+test('streams the snapshot first, then live deltas and the completion flash', async () => {
   const controller = new AbortController()
   try {
     const response = await fetch(`${base}/api/stream?sessionId=session-test`, { signal: controller.signal })
@@ -309,12 +339,61 @@ test('streams live deltas and a completion flash without an SSE snapshot', async
       body += decoder.decode(value, { stream: true })
     }
     assert.match(body, /"t":"ready"/)
-    assert.doesNotMatch(body, /"t":"snapshot"/)
+    // The follow snapshot opens the stream: history truth and live events
+    // share one ordered connection, so a reconnect resyncs deterministically.
+    assert.match(body, /"t":"snapshot"/)
+    assert.match(body, /hello session-test/)
+    assert.match(body, /"final":true/)
+    assert.match(body, /partial-test/)
     assert.match(body, /"t":"delta"/)
     assert.match(body, /"t":"jobs"/)
     assert.match(body, /"t":"job-output"/)
     assert.match(body, /"t":"flash"/)
+    // Durable events pass through with their dense seq for the page's gating.
+    assert.match(body, /"seq":2/)
+    assert.match(body, /"seq":3/)
     assert.doesNotMatch(body, /"sessionId"/)
+  } finally {
+    controller.abort()
+  }
+})
+
+test('splits a large snapshot into ordered final:false chunks plus a final one', async () => {
+  const controller = new AbortController()
+  try {
+    const response = await fetch(`${base}/api/stream?sessionId=session-bulk`, { signal: controller.signal })
+    assert.equal(response.status, 200)
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let body = ''
+    // One sequential pump; racing reader.read() against a timeout would
+    // abandon pending reads and silently swallow queued chunks.
+    const pump = (async () => {
+      try {
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) break
+          body += decoder.decode(value, { stream: true })
+        }
+      } catch { /* aborted at the end of the test */ }
+    })()
+    const deadline = Date.now() + 8000
+    while (Date.now() < deadline && !body.includes('"final":true')) await sleep(100)
+    void pump
+    const frames = body.split('\n')
+      .filter((line) => line.startsWith('data: '))
+      .map((line) => {
+        try { return JSON.parse(line.slice(6)) } catch { return null }
+      })
+      .filter((frame) => frame?.t === 'snapshot')
+    assert.equal(frames.length, 2)
+    assert.equal(frames[0].final, false)
+    assert.equal(frames[0].cursor, 25)
+    assert.equal(frames[0].records.length, 20)
+    assert.equal(frames[1].final, true)
+    assert.equal(frames[1].cursor, undefined)
+    assert.equal(frames[1].records.length, 5)
+    assert.equal(frames[1].records.at(-1).event.data.content[0].text, 'm24')
   } finally {
     controller.abort()
   }
@@ -337,7 +416,7 @@ test('multiplexes several sessions over one SSE and tags every frame', async () 
     assert.match(body, /"sessionId":"session-test"/)
     assert.match(body, /"sessionId":"session-second"/)
     assert.match(body, /"t":"ready"/)
-    assert.doesNotMatch(body, /"t":"snapshot"/)
+    assert.match(body, /"t":"snapshot"/)
     assert.match(body, /"t":"delta"/)
     assert.match(body, /"t":"jobs"/)
     assert.match(body, /"t":"job-output"/)

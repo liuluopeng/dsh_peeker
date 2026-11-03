@@ -380,11 +380,18 @@
 
   function trimItems(pane) {
     if (pane.items.length <= MAX_RENDER_ITEMS) return
-    pane.items = pane.items.slice(-MAX_RENDER_ITEMS)
+    let from = pane.items.length - MAX_RENDER_ITEMS
+    // Never drop a tool call whose result has not landed: trimming past it
+    // would detach the eventual output as an orphan "工具结果" note.
+    while (from > 0 && pane.items[from]?.kind === 'tool' && pane.items[from].done !== true) from -= 1
+    pane.items = pane.items.slice(from)
     if (pane.live !== null && !pane.items.includes(pane.live)) pane.live = null
     if (pane.liveTool !== null && !pane.items.includes(pane.liveTool.item)) {
       pane.liveTool = null
       pane.liveToolNode = null
+    }
+    for (const [attempt, draft] of pane.drafts) {
+      if (!pane.items.includes(draft.item)) pane.drafts.delete(attempt)
     }
   }
 
@@ -613,16 +620,36 @@
         break
       case 'assistant/message': {
         const { text, reasoning } = splitAssistant(data.message && data.message.content)
-        const last = pane.items[pane.items.length - 1]
-        if (last && last.kind === 'assistant' && (last.streamed === true || last.live === true)) {
-          last.text = text
-          last.reasoning = reasoning
-          last.live = false
-          last.streamed = false
+        // The streamed draft commits to its durable row by shared turn/step
+        // (or the stream-end's committed seq), replacing that row in place so
+        // the transcript never grows a duplicate card next to the draft.
+        const turn = Number(data.turn) || 0
+        const step = Number(data.step) || 0
+        const seq = Number(event.seq) || 0
+        let target = null
+        let matchedAttempt = null
+        for (const [attempt, draft] of pane.drafts) {
+          if ((seq > 0 && draft.commitSeq === seq) || (turn > 0 && draft.turn === turn && draft.step === step)) {
+            target = draft.item
+            matchedAttempt = attempt
+            break
+          }
+        }
+        if (target === null) {
+          const last = pane.items[pane.items.length - 1]
+          if (last && last.kind === 'assistant' && (last.streamed === true || last.live === true)) target = last
+        }
+        if (target !== null) {
+          target.text = text
+          target.reasoning = reasoning
+          target.live = false
+          target.streamed = false
+          if (matchedAttempt !== null) pane.drafts.delete(matchedAttempt)
+          if (pane.live === target) pane.live = null
         } else {
           pane.items.push({ kind: 'assistant', text, reasoning, time: event.time })
+          pane.live = null
         }
-        pane.live = null
         break
       }
       case 'tool/call': {
@@ -667,11 +694,13 @@
         break
       }
       case 'turn/start':
+        pane.drafts.clear()
         pane.running = true
         pane.startedAt = Number(event.time) || Date.now()
         paintPane(pane)
         break
       case 'turn/end':
+        pane.drafts.clear()
         // A snapshot replays old turns; only a live turn/end destroys the pane.
         // Otherwise opening the page on any session with history would remove
         // the pane immediately after its first snapshot.
@@ -688,14 +717,45 @@
     }
   }
 
+  /**
+   * Live assistant frames are ordered per attempt: `start` names the attempt
+   * and its turn/step, `chunk.index` is dense. Stale or duplicated chunks are
+   * dropped; a skipped index resyncs the pane from the next snapshot. Frames
+   * without an attemptId (a host without the dense-index protocol) fall back
+   * to the single live item.
+   */
   function applyDelta(pane, frame) {
     if (!frame) return
+    const attemptId = typeof frame.attemptId === 'string' && frame.attemptId !== '' ? frame.attemptId : null
     if (frame.type === 'start') {
-      ensureLive(pane)
+      if (attemptId === null) {
+        ensureLive(pane)
+        renderPane(pane)
+        return
+      }
+      const existing = pane.drafts.get(attemptId)
+      if (existing !== undefined && existing.item !== null && existing.item === pane.live) {
+        return // restart of the tracked attempt; its row keeps streaming
+      }
+      // A new attempt must not bleed into the previous attempt's row.
+      if (pane.live !== null) pane.live.live = false
+      pane.live = null
+      const live = ensureLive(pane)
+      pane.drafts.set(attemptId, {
+        turn: Number(frame.turn) || 0, step: Number(frame.step) || 0,
+        nextIndex: 0, closed: false, commitSeq: null, item: live,
+      })
       renderPane(pane)
       return
     }
     if (frame.type === 'end') {
+      if (attemptId !== null) {
+        const draft = pane.drafts.get(attemptId)
+        if (draft !== undefined) {
+          draft.closed = true
+          if (frame.outcome?.kind === 'committed') draft.commitSeq = Number(frame.outcome.seq) || null
+        }
+      }
       if (pane.live !== null) {
         pane.live.live = false
         pane.live = null
@@ -705,6 +765,28 @@
     }
     if (frame.type !== 'chunk' || !frame.chunk) return
     const chunk = frame.chunk
+    if (attemptId !== null) {
+      let draft = pane.drafts.get(attemptId)
+      if (draft === undefined) {
+        // Chunk before its start frame: adopt the attempt as if it started.
+        const live = ensureLive(pane)
+        draft = { turn: 0, step: 0, nextIndex: 0, closed: false, commitSeq: null, item: live }
+        pane.drafts.set(attemptId, draft)
+      }
+      if (Number.isFinite(frame.index)) {
+        if (frame.index < draft.nextIndex) return
+        if (frame.index > draft.nextIndex) {
+          // The stream skipped a position; the next snapshot repairs the pane.
+          if (!pane.resyncing) {
+            pane.resyncing = true
+            pane.lastSeq = null
+            void refreshPanes()
+          }
+          return
+        }
+        draft.nextIndex += 1
+      }
+    }
     if (chunk.type === 'text-delta') {
       const text = chunk.text || ''
       ensureLive(pane).text += text
@@ -754,14 +836,14 @@
   /**
    * A phone browser may suspend the page (screen off, background tab, power
    * saver) without firing EventSource.onerror. The server sends a data ping
-   * every 15 seconds; if none arrived for 30 seconds while the page is visible,
-   * close the old socket and request a fresh snapshot immediately instead of
+   * every 5 seconds; if none arrived for 12 seconds while the page is visible,
+   * close the old socket and request a fresh stream immediately instead of
    * leaving the pane frozen.
    */
   function ensureStreamFresh() {
     if (document.visibilityState !== 'visible' || panes.size === 0) return
     const now = Date.now()
-    const stale = streamSource === null || !streamOpen || now - lastStreamAt > 30000
+    const stale = streamSource === null || !streamOpen || now - lastStreamAt > 12000
     if (!stale || now - lastReopenAt < 10000) return
     lastReopenAt = now
     void refreshPanes()
@@ -1001,19 +1083,63 @@
     }
   }
 
+  /**
+   * Durable events are ordered by their dense `seq`. Old or duplicated frames
+   * are dropped; a gap means the connection missed something, so the pane
+   * resyncs by reopening the stream, whose next snapshot repairs it — the
+   * same discipline the official client and DSH Go follow.
+   */
+  function gateEvent(pane, event) {
+    const seq = Number(event?.seq)
+    if (!Number.isFinite(seq) || seq <= 0) return true
+    if (pane.lastSeq !== null) {
+      if (seq <= pane.lastSeq) return false
+      if (seq > pane.lastSeq + 1) {
+        if (!pane.resyncing) {
+          pane.resyncing = true
+          pane.lastSeq = null
+          void refreshPanes()
+        }
+        return false
+      }
+    }
+    pane.lastSeq = seq
+    return true
+  }
+
   function handlePane(pane, payload) {
     if (!payload || typeof payload !== 'object') return
     if (payload.t === 'snapshot') {
+      // The server splits big snapshots into ordered small frames; only the
+      // one marked final resets the pane, so intermediate chunks accumulate.
+      const records = Array.isArray(payload.records) ? payload.records : []
+      if (payload.final !== true) {
+        pane.pendingSnapshot = [...(pane.pendingSnapshot ?? []), ...records]
+        if (payload.dropped !== undefined) pane.pendingDropped = payload.dropped
+        return
+      }
+      const all = [...(pane.pendingSnapshot ?? []), ...records]
+      const dropped = payload.dropped ?? pane.pendingDropped ?? 0
+      pane.pendingSnapshot = null
+      pane.pendingDropped = 0
       pane.items = []
       pane.live = null
+      pane.liveNode = null
       pane.liveTool = null
       pane.liveToolNode = null
+      pane.drafts.clear()
+      pane.lastSeq = null
+      pane.resyncing = false
       pane.snapshot = true
-      if (payload.dropped > 0) {
-        pane.items.push({ kind: 'note', text: `已省略最早的 ${payload.dropped} 条事件，下面只显示最近的内容`, time: Date.now() })
+      if (dropped > 0) {
+        pane.items.push({ kind: 'note', text: `已省略最早的 ${dropped} 条事件，下面只显示最近的内容`, time: Date.now() })
       }
-      for (const record of Array.isArray(payload.records) ? payload.records : []) {
-        if (record && record.type === 'event' && record.event) applyEvent(pane, record.event, true)
+      for (const record of all) {
+        if (record && record.type === 'event' && record.event) {
+          applyEvent(pane, record.event, true)
+          const seq = Number(record.event.seq)
+          if (Number.isFinite(seq) && seq > 0) pane.lastSeq = seq
+        }
       }
       hydrateAssistantStream(pane, payload.assistantStream)
       pane.streamState = 'open'
@@ -1022,6 +1148,7 @@
       return
     }
     if (payload.t === 'event') {
+      if (!gateEvent(pane, payload.event)) return
       applyEvent(pane, payload.event)
       renderPane(pane)
       return
@@ -1090,7 +1217,8 @@
       zcode: session.source === 'zcode' || String(session.sessionId || '').startsWith('z:'),
       running: session.running === true, streamState: streamOpen ? 'open' : 'connecting',
       items: [], live: null, liveNode: null, liveTool: null, liveToolNode: null, snapshot: false,
-      createdAt: Date.now(), reopenedEmpty: false, bootstrapped: false, bootstrapStarted: false,
+      createdAt: Date.now(), reopenedEmpty: false,
+      lastSeq: null, resyncing: false, drafts: new Map(), pendingSnapshot: null, pendingDropped: 0,
       term: null, termNode: null, termText: '', termPlaceholder: false, termLiveHeader: false, termReasoningHeader: false,
       startedAt: 0, jobs: new Map(), jobsEl, elapsedEl: elapsed,
       root, titleEl: title, dotEl: dot, statusEl: status, body,
@@ -1117,50 +1245,15 @@
     updateLayout()
   }
 
-  async function bootstrapPane(pane) {
-    if (pane.bootstrapped === true || pane.bootstrapStarted === true) return
-    pane.bootstrapStarted = true
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 10000)
-    try {
-      const query = new URLSearchParams({ sessionId: pane.id })
-      if (pane.parentSessionId !== '') query.set('parentSessionId', pane.parentSessionId)
-      const response = await fetch(`/api/bootstrap?${query}`, { cache: 'no-store', signal: controller.signal })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const body = await response.json()
-      handlePane(pane, {
-        t: 'snapshot',
-        records: body.records,
-        dropped: body.dropped,
-        assistantStream: body.assistantStream,
-      })
-      pane.bootstrapped = true
-    } catch {
-      // Keep the live stream path usable even if the one-shot bootstrap fails;
-      // the note explains why the pane may start blank.
-      pane.snapshot = true
-      pane.bootstrapped = true
-      if (pane.items.length === 0) {
-        pane.items.push({ kind: 'note', text: '无法加载历史，等待实时输出', time: Date.now() })
-        renderPane(pane)
-      }
-    } finally {
-      clearTimeout(timer)
-      pane.bootstrapStarted = false
-      paintPane(pane)
-    }
-  }
-
-  async function refreshPanes() {
-    if (refreshing || panes.size === 0) return
+  /**
+   * History arrives as chunked snapshot frames on the stream itself, so a
+   * reconnect resyncs deterministically instead of racing a separate
+   * bootstrap fetch. Reopening the connection is the whole refresh.
+   */
+  function refreshPanes() {
+    if (panes.size === 0 || refreshing) return
     refreshing = true
     try {
-      const list = [...panes.values()]
-      for (const pane of list) {
-        pane.bootstrapped = false
-        pane.bootstrapStarted = false
-      }
-      await Promise.all(list.map(bootstrapPane))
       openSharedStream(true)
     } finally {
       refreshing = false
@@ -1216,14 +1309,8 @@
         if (!activeIds.has(pane.id)) removePane(pane)
       }
 
-      // The initial transcript comes from ordinary HTTP, never from the first
-      // SSE write. Open the live stream only after the new panes have content.
-      const fresh = [...panes.values()].filter((pane) => pane.bootstrapped !== true && pane.bootstrapStarted !== true)
-      if (fresh.length > 0) {
-        await Promise.all(fresh.map(bootstrapPane))
-        needReopen = true
-      }
-
+      // New panes change the stream key, which reopens the shared connection;
+      // their history arrives as chunked snapshot frames on that stream.
       openSharedStream(needReopen)
       updateLayout()
       const shown = panes.size

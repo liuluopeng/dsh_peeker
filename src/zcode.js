@@ -375,6 +375,12 @@ export function createZcodeSource({ enabled = true, dbPath, log = () => {} } = {
     const live = await runningState(session, now)
     const first = state.seeded !== true
     state.seeded = true
+    if (first) {
+      // The page gets history from this same stream: bootstrap records open
+      // the watch, so snapshot truth and live tracking share one ordered
+      // sequence and a reconnect just reseeds.
+      emit(rawId, { t: 'snapshot', records: await bootstrap(rawId) })
+    }
     if (!first && live.running && !state.wasRunning) {
       state.wasRunning = true
       emit(rawId, { t: 'event', event: { type: 'turn/start', time: now, data: {} } })

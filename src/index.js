@@ -500,12 +500,44 @@ export function apply(ctx, config) {
         try {
           // The comment keeps proxies warm; the data frame gives the page a
           // heartbeat it can observe, so it can detect a silently suspended
-          // mobile connection and force a fresh stream on the next visible frame.
+          // mobile connection and force a fresh stream on the next visible
+          // frame. Five seconds matches the page's 12-second stale threshold
+          // with room for a couple of lost writes.
           res.write(': ping\n\n')
           sendEvent(res, { t: 'ping', at: Date.now() })
         } catch { stop() }
       }
-    }, 15000)
+    }, 5000)
+    /**
+     * Emit one follow snapshot as a series of small SSE frames. History truth
+     * and live events share one ordered connection, so a reconnect resyncs
+     * deterministically instead of racing a separate bootstrap fetch. The
+     * chunking is what keeps mobile proxies from stalling a one-shot large
+     * SSE write: no single frame approaches the sizes that buffer.
+     */
+    const emitSnapshotFrames = (sessionId, { records, cursor, dropped, assistantStream }) => {
+      const batch = 20
+      if (records.length === 0) {
+        emit(sessionId, {
+          t: 'snapshot', records,
+          ...(cursor === undefined ? {} : { cursor }),
+          ...(dropped > 0 ? { dropped } : {}),
+          final: true,
+          ...(assistantStream === undefined ? {} : { assistantStream }),
+        })
+        return
+      }
+      for (let from = 0; from < records.length; from += batch) {
+        const final = from + batch >= records.length
+        emit(sessionId, {
+          t: 'snapshot',
+          ...(from === 0 ? { ...(cursor === undefined ? {} : { cursor }), ...(dropped > 0 ? { dropped } : {}) } : {}),
+          records: records.slice(from, from + batch),
+          final,
+          ...(final && assistantStream !== undefined ? { assistantStream } : {}),
+        })
+      }
+    }
     const followSession = async (sessionId, parentSessionId) => {
       const controller = new AbortController()
       controllers.set(sessionId, controller)
@@ -524,11 +556,17 @@ export function apply(ctx, config) {
         for await (const frame of frames) {
           if (controller.signal.aborted || disposed) break
           if (frame?.type === 'snapshot') {
-            // The page has already bootstrapped this session over plain HTTP.
-            // Do not put a large snapshot back on the SSE connection; mobile
-            // proxies can buffer it until another write, which looks like a
-            // permanently "running" pane with no messages.
-            continue
+            // The follow snapshot opens the stream on purpose: history truth
+            // and live events share one ordered connection, so a reconnect
+            // resyncs deterministically instead of racing a separate
+            // bootstrap fetch.
+            const fitted = fitSnapshot(frame.records)
+            emitSnapshotFrames(sessionId, {
+              records: fitted.records,
+              dropped: fitted.dropped,
+              cursor: typeof frame.cursor === 'number' ? frame.cursor : undefined,
+              assistantStream: frame.assistantStream,
+            })
           } else if (frame?.type === 'event') {
             emit(sessionId, { t: 'event', event: shrink(trimEvent(frame.event)) })
             if (frame.event?.type === 'turn/end') emit(sessionId, { t: 'flash', times: 3 })
@@ -557,6 +595,11 @@ export function apply(ctx, config) {
       const controller = new AbortController()
       controllers.set(rawIds.join('\u0000'), controller)
       const zcodeEmit = (rawId, payload) => {
+        if (payload?.t === 'snapshot') {
+          const fitted = fitSnapshot(payload.records)
+          emitSnapshotFrames(`${ZCODE_PREFIX}${rawId}`, { records: fitted.records, dropped: fitted.dropped })
+          return
+        }
         if (payload?.t === 'event') payload = { ...payload, event: shrink(trimEvent(payload.event)) }
         emit(`${ZCODE_PREFIX}${rawId}`, payload)
         if (payload?.t === 'event' && payload.event?.type === 'turn/end') {
