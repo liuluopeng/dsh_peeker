@@ -84,6 +84,27 @@ function shrink(value, depth = 0) {
   return value
 }
 
+/**
+ * A live `assistant/message` commit replaces text the page has already
+ * streamed in full, so its text and reasoning get a much higher cap than
+ * snapshots — truncating here would visibly cut a finished reply short the
+ * moment it commits.
+ */
+const LIVE_TEXT_MAX = 65_536
+
+function shrinkEvent(event) {
+  if (event?.type !== 'assistant/message' || event.data === null || typeof event.data !== 'object') return shrink(event)
+  const message = event.data.message ?? {}
+  const content = Array.isArray(message.content) ? message.content : []
+  const capped = content.map((block) => {
+    if ((block?.type === 'text' || block?.type === 'reasoning') && typeof block.text === 'string' && block.text.length > LIVE_TEXT_MAX) {
+      return { ...block, text: `${block.text.slice(0, LIVE_TEXT_MAX)}\n…（已截断）` }
+    }
+    return block
+  })
+  return { ...event, data: { ...event.data, message: { ...message, content: capped } } }
+}
+
 /** Keep the newest records that fit the snapshot budget. */
 function fitSnapshot(records) {
   const trimmed = (Array.isArray(records) ? records : [])
@@ -568,7 +589,7 @@ export function apply(ctx, config) {
               assistantStream: frame.assistantStream,
             })
           } else if (frame?.type === 'event') {
-            emit(sessionId, { t: 'event', event: shrink(trimEvent(frame.event)) })
+            emit(sessionId, { t: 'event', event: shrinkEvent(trimEvent(frame.event)) })
             if (frame.event?.type === 'turn/end') emit(sessionId, { t: 'flash', times: 3 })
           } else if (frame?.type === 'assistant-stream') {
             emit(sessionId, { t: 'delta', frame: frame.frame })
@@ -600,7 +621,7 @@ export function apply(ctx, config) {
           emitSnapshotFrames(`${ZCODE_PREFIX}${rawId}`, { records: fitted.records, dropped: fitted.dropped })
           return
         }
-        if (payload?.t === 'event') payload = { ...payload, event: shrink(trimEvent(payload.event)) }
+        if (payload?.t === 'event') payload = { ...payload, event: shrinkEvent(trimEvent(payload.event)) }
         emit(`${ZCODE_PREFIX}${rawId}`, payload)
         if (payload?.t === 'event' && payload.event?.type === 'turn/end') {
           emit(`${ZCODE_PREFIX}${rawId}`, { t: 'flash', times: 3 })

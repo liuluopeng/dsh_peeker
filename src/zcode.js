@@ -201,6 +201,26 @@ export function createZcodeSource({ enabled = true, dbPath, log = () => {} } = {
       const outcomeSettled = session.last_outcome !== null && now - updated >= RUNNING_FRESH_MS
       if ((!outcomeSettled || postOutcome) && now - touched < TOUCHED_MAX_MS) return { running: true }
     }
+    // The turn was accepted but generation has not started: the newest row is
+    // still the user's own message (model scheduling can easily sit out
+    // minutes). Without this the pane dies ~90 s into the queue wait and only
+    // revives at the first token — the observed "two minutes of nothing, then
+    // the text arrives". Model-only rows (silent-turn reminders, interrupt
+    // markers) are engine bookkeeping, not the user speaking, and must not
+    // hold a settled turn open. An `error` outcome on record means the last
+    // attempt died right after the message — settled, not queued.
+    const newest = await queryRow(
+      `SELECT data, time_created FROM message
+       WHERE session_id = ? AND json_extract(data, '$.metadata.visibility') IS NULL
+       ORDER BY time_created DESC LIMIT 1`,
+      session.id,
+    )
+    if (newest !== undefined
+      && safeParse(newest.data).role === 'user'
+      && session.last_outcome !== 'error'
+      && now - (Number(newest.time_created) || 0) < TOUCHED_MAX_MS) {
+      return { running: true }
+    }
     return { running: false }
   }
 

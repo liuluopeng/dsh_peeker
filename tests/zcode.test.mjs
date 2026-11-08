@@ -133,6 +133,16 @@ function seed() {
   // recorded), message still uncompleted — hours-long turns are real.
   insertSession('sess-stall', 'Z 长任务', now - 60 * 60_000)
   insertMessage('msg-stall', 'sess-stall', now - 60 * 60_000, { role: 'assistant', time: { created: now - 60 * 60_000 } })
+  // A turn accepted but still queued: the newest row is the user's own
+  // message and the model has not produced anything yet. The pane must stay
+  // alive through the scheduling gap instead of dying at the 90 s mark.
+  insertSession('sess-queued', 'Z 排队任务', now - 5 * 60_000, 'completed')
+  insertMessage('msg-queued-done', 'sess-queued', now - 30 * 60_000, { role: 'assistant', time: { created: now - 30 * 60_000, completed: now - 29 * 60_000 } })
+  insertMessage('msg-queued-user', 'sess-queued', now - 5 * 60_000, { role: 'user', time: { created: now - 5 * 60_000 } })
+  // Same shape but with an `error` outcome written right after the message:
+  // the attempt died immediately — settled, not queued.
+  insertSession('sess-err-queued', 'Z 秒错任务', now - 5 * 60_000, 'error')
+  insertMessage('msg-err-queued-user', 'sess-err-queued', now - 5 * 60_000, { role: 'user', time: { created: now - 5 * 60_000 } })
   // Too old to list in any form.
   insertSession('sess-old', 'Z 旧任务', now - 2 * 3600_000)
 }
@@ -209,6 +219,14 @@ test('merges ZCode sessions into the LAN session list', async () => {
   const stall = body.items.find((item) => item.sessionId === 'z:sess-stall')
   assert.ok(stall, 'long in-flight turn is listed')
   assert.equal(stall.running, true, 'an uncompleted message outlasts the old 30 min cap')
+  // The queue wait keeps the pane alive; an instant-error settles instead.
+  const queued = body.items.find((item) => item.sessionId === 'z:sess-queued')
+  assert.ok(queued, 'queued turn is listed')
+  assert.equal(queued.running, true, 'a scheduling gap after the user message is still a live task')
+  const errQueued = body.items.find((item) => item.sessionId === 'z:sess-err-queued')
+  assert.ok(errQueued, 'instant-error turn is listed')
+  assert.equal(errQueued.running, false, 'an error outcome settles the attempt')
+  assert.equal(errQueued.outcome, 'error')
   assert.equal(body.items.find((item) => item.sessionId === 'z:sess-old'), undefined)
 })
 
@@ -238,6 +256,10 @@ test('watcher streams deltas and flashes when the ZCode turn completes', async (
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let body = ''
+    // Accumulate streamed text separately: the watcher emits a delta per poll,
+    // so a sentence arrives as several frames and a raw-body match on the full
+    // sentence would depend on seed timing.
+    let streamedText = ''
     // One sequential pump drains the stream; a per-step wait only polls the
     // accumulated text. Racing reader.read() against a timeout would abandon
     // pending reads, and Node delivers queued chunks to abandoned reads in
@@ -247,7 +269,17 @@ test('watcher streams deltas and flashes when the ZCode turn completes', async (
         while (true) {
           const { value, done } = await reader.read()
           if (done) break
-          body += decoder.decode(value, { stream: true })
+          const chunk = decoder.decode(value, { stream: true })
+          body += chunk
+          for (const line of chunk.split('\n')) {
+            if (!line.startsWith('data: ')) continue
+            try {
+              const frame = JSON.parse(line.slice(6))
+              if (frame.t === 'delta' && frame.frame?.chunk?.type === 'text-delta') {
+                streamedText += frame.frame.chunk.text ?? ''
+              }
+            } catch { /* partial line tail */ }
+          }
         }
       } catch { /* aborted at the end of the test */ }
     })()
@@ -268,6 +300,7 @@ test('watcher streams deltas and flashes when the ZCode turn completes', async (
     await waitUntil((text) => text.includes('流式输出'))
     assert.match(body, /"type":"text-delta"/)
     assert.match(body, /流式输出/)
+    assert.ok(streamedText.includes('正在流式输出'), `streamed text should reconstruct the full sentence, got: ${JSON.stringify(streamedText.slice(-40))}`)
 
     // Complete the running tool part, then settle the turn: the watcher emits
     // the tool result, the final assistant message, and the completion flash.
@@ -277,6 +310,11 @@ test('watcher streams deltas and flashes when the ZCode turn completes', async (
         state: { status: 'completed', input: { file_path: '/x' }, output: 'file content' },
       }), Date.now(), 'p-live-tool')
     await waitUntil((text) => text.includes('file content'))
+    // A long final reply must not be cut down to the snapshot cap when it
+    // commits — the page already streamed it in full.
+    const longReply = '长'.repeat(5000)
+    db.prepare('UPDATE part SET data = ?, time_updated = ? WHERE id = ?')
+      .run(JSON.stringify({ type: 'text', text: longReply }), Date.now(), 'p-live-text')
     db.prepare('UPDATE message SET data = ?, time_updated = ? WHERE id = ?')
       .run(JSON.stringify({ role: 'assistant', time: { created: now - 10_000, completed: now } }), now, assistantLive)
     db.prepare('UPDATE session SET time_updated = ?, last_outcome = ? WHERE id = ?')
@@ -284,7 +322,9 @@ test('watcher streams deltas and flashes when the ZCode turn completes', async (
     await waitUntil((text) => text.includes('"t":"flash"'))
     assert.match(body, /"type":"tool\/result"/)
     assert.match(body, /"type":"assistant\/message"/)
-    assert.match(body, /正在流式输出/)
+    assert.ok(streamedText.includes('正在流式输出'))
+    assert.ok(body.includes(longReply), 'the committed reply is not truncated to the 4000-char snapshot cap')
+    assert.doesNotMatch(body, /已截断/)
     assert.match(body, /"type":"turn\/end"/)
     assert.match(body, /"t":"flash"/)
   } finally {
