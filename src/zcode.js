@@ -30,8 +30,12 @@ export const ZCODE_PREFIX = 'z:'
 
 /** A session whose store was touched this recently counts as running. */
 const RUNNING_FRESH_MS = 90_000
-/** An in-flight assistant message older than this is a crashed turn, not a live one. */
-const INFLIGHT_MAX_MS = 30 * 60_000
+/**
+ * How long an in-flight turn (or a `running` tool part) may stay silent
+ * before it is treated as dead. Measured ZCode turns run for hours, and tool
+ * runs go silent for their whole duration, so this is generous on purpose.
+ */
+const TOUCHED_MAX_MS = 2 * 60 * 60_000
 /** Recently finished sessions stay listed for the completion strip. */
 const RECENT_KEEP_MS = 30 * 60_000
 /** Store poll fallback period while a stream watches ZCode sessions; real wakes come from the stat loop. */
@@ -84,6 +88,9 @@ export function createZcodeSource({ enabled = true, dbPath, log = () => {} } = {
   let DatabaseSync = null
   let database = null
   let closed = false
+  /** Sessions whose watched turn began after the recorded outcome: quiet
+   * phases of those turns must never be settled by the stale outcome. */
+  const postOutcomeSessions = new Set()
   let lastLoggedError = ''
   let lastErrorLogAt = 0
 
@@ -148,17 +155,41 @@ export function createZcodeSource({ enabled = true, dbPath, log = () => {} } = {
   }
 
   /**
-   * Running state of one session row. Freshness alone is not enough: a long
-   * quiet tool run writes nothing for minutes, but its assistant message row
-   * stays uncompleted for the whole turn. The inverse trap is an errored turn:
-   * ZCode records `last_outcome` and freezes every timestamp at the same
-   * instant (`session.time_updated == message.time_created`) while leaving the
-   * message uncompleted — that signature means finished, not running.
+   * Running state of one session row, from measured ZCode store invariants:
+   *
+   * - Writes within the fresh window mean live streaming (parts update every
+   *   ~10 s on average while a turn generates).
+   * - An assistant message without `time.completed` is an in-flight turn,
+   *   however old: the row is written at generation start and marked only
+   *   when the turn settles, and mid-turn silences are real — long tool runs
+   *   go quiet for their whole duration (Bash alone defaults to a 5 min
+   *   timeout) and measured turns run up to hours.
+   * - A tool part still marked `status: 'running'` is the store's own
+   *   signature of a quiet command in flight; without it a multi-minute tool
+   *   run is indistinguishable from silence.
+   * - `last_outcome` is NOT a liveness authority: it stays from the previous
+   *   turn while the next one runs (verified live). It only settles the
+   *   session when the store has been quiet since — an errored turn leaves
+   *   its message uncompleted with the outcome written and nothing after.
+   *   The watcher's `postOutcome` memory (a user message observed arriving
+   *   after the outcome) overrides this, covering generation stalls under
+   *   active watch.
    */
-  async function runningState(session, now) {
+  async function runningState(session, now, { postOutcome = false } = {}) {
     if (session.time_archived !== null || session.time_deleted !== null) return { running: false }
     const updated = Number(session.time_updated) || 0
-    if (now - updated < RUNNING_FRESH_MS) return { running: true }
+    const fresh = now - updated < RUNNING_FRESH_MS
+    if (fresh) return { running: true }
+    const runningTool = await queryRow(
+      `SELECT time_updated FROM part
+       WHERE session_id = ? AND json_extract(data, '$.type') = 'tool'
+         AND json_extract(data, '$.state.status') = 'running'
+       ORDER BY time_updated DESC LIMIT 1`,
+      session.id,
+    )
+    if (runningTool !== undefined && now - (Number(runningTool.time_updated) || 0) < TOUCHED_MAX_MS) {
+      return { running: true }
+    }
     const last = await queryRow(
       `SELECT data, time_created, time_updated FROM message
        WHERE session_id = ? AND json_extract(data, '$.role') = 'assistant'
@@ -166,12 +197,9 @@ export function createZcodeSource({ enabled = true, dbPath, log = () => {} } = {
       session.id,
     )
     if (last !== undefined && !completedOf(last.data)) {
-      const created = Number(last.time_created) || 0
       const touched = Math.max(Number(last.time_updated) || 0, updated)
-      const erroredFrozen = session.last_outcome !== null
-        && Math.abs(updated - created) < 1500
-        && now - updated >= RUNNING_FRESH_MS
-      if (!erroredFrozen && now - touched < INFLIGHT_MAX_MS) return { running: true }
+      const outcomeSettled = session.last_outcome !== null && now - updated >= RUNNING_FRESH_MS
+      if ((!outcomeSettled || postOutcome) && now - touched < TOUCHED_MAX_MS) return { running: true }
     }
     return { running: false }
   }
@@ -210,12 +238,12 @@ export function createZcodeSource({ enabled = true, dbPath, log = () => {} } = {
        WHERE time_updated > ?
        ORDER BY time_updated DESC
        LIMIT 64`,
-      now - Math.max(INFLIGHT_MAX_MS, RECENT_KEEP_MS) - RUNNING_FRESH_MS,
+      now - Math.max(TOUCHED_MAX_MS, RECENT_KEEP_MS) - RUNNING_FRESH_MS,
     )
     const items = []
     for (const row of rows) {
       if (items.length >= MAX_ITEMS) break
-      const state = await runningState(row, now)
+      const state = await runningState(row, now, { postOutcome: postOutcomeSessions.has(row.id) })
       if (state.running) items.push(publicSession(row, { running: true }))
       else if (row.last_outcome && now - (Number(row.time_updated) || 0) < RECENT_KEEP_MS) {
         items.push(publicSession(row, { running: false, outcome: String(row.last_outcome), finishedAt: Number(row.time_updated) || 0 }))
@@ -435,9 +463,10 @@ export function createZcodeSource({ enabled = true, dbPath, log = () => {} } = {
         state.wasRunning = false
         emit(rawId, { t: 'event', event: { type: 'turn/end', time: now, data: {} } })
       }
+      postOutcomeSessions.delete(rawId)
       return
     }
-    const live = await runningState(session, now)
+    const live = await runningState(session, now, { postOutcome: postOutcomeSessions.has(rawId) })
     const first = state.seeded !== true
     state.seeded = true
     if (first) {
@@ -474,6 +503,11 @@ export function createZcodeSource({ enabled = true, dbPath, log = () => {} } = {
           state.msgs.set(message.id, { role: data.role, completed })
           // On the seed poll the page already has this transcript from bootstrap.
           if (!first) await emitNewMessage(rawId, emit, message, data)
+          // A user message arriving while an outcome is on record starts a
+          // turn that postdates that outcome: remember it, so quiet phases of
+          // this turn are never settled by the stale outcome. Cleared when the
+          // turn's message completes or the turn ends.
+          if (data.role === 'user' && session.last_outcome !== null) postOutcomeSessions.add(rawId)
         } else if (data.role === 'assistant' && known.completed === false && completed === true) {
           known.completed = true
           await emitAssistantFinal(rawId, emit, message)
@@ -481,13 +515,25 @@ export function createZcodeSource({ enabled = true, dbPath, log = () => {} } = {
       }
       await emitToolTransitions(rawId, emit, tail, state, first ? (inflightId ?? null) : undefined)
       if (inflightId !== null) await emitInflightParts(rawId, emit, inflightId, state)
+      else postOutcomeSessions.delete(rawId)
     }
     if (!first && !live.running && wasRunning) {
-      state.wasRunning = false
-      emit(rawId, { t: 'event', event: { type: 'turn/end', time: now, data: {} } })
-      return
+      // Two consecutive not-running polls before destroying the pane: one
+      // misread must never flash "finished" over a live turn.
+      state.notRunningStreak = (state.notRunningStreak ?? 0) + 1
+      if (state.notRunningStreak >= 2) {
+        state.wasRunning = false
+        state.notRunningStreak = 0
+        postOutcomeSessions.delete(rawId)
+        emit(rawId, { t: 'event', event: { type: 'turn/end', time: now, data: {} } })
+        return
+      }
+    } else {
+      state.notRunningStreak = 0
     }
-    state.wasRunning = live.running
+    // Inside the hysteresis window the turn still counts as running, so a
+    // recovery on the next poll never produces a spurious turn/start.
+    state.wasRunning = live.running || (state.notRunningStreak ?? 0) >= 1
   }
 
   async function emitNewMessage(rawId, emit, message, data) {

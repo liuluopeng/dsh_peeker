@@ -118,6 +118,21 @@ function seed() {
   insertSession('sess-error', 'Z 出错任务', now - 8 * 60_000, 'error')
   insertMessage('msg-error', 'sess-error', now - 8 * 60_000, { role: 'assistant', time: { created: now - 8 * 60_000 } })
   insertPart('p-error-text', 'msg-error', 'sess-error', now - 8 * 60_000, { type: 'text', text: '出错的回答' })
+  // A multi-turn task deep in a quiet tool run: the outcome on record is the
+  // PREVIOUS turn's, the store has been silent for 10 minutes, and the tool
+  // part is still marked running — this must stay running, never flash.
+  insertSession('sess-quiet', 'Z 安静工具任务', now - 10 * 60_000, 'completed')
+  insertMessage('msg-quiet-done', 'sess-quiet', now - 20 * 60_000, { role: 'assistant', time: { created: now - 20 * 60_000, completed: now - 15 * 60_000 } })
+  insertMessage('msg-quiet-user', 'sess-quiet', now - 12 * 60_000, { role: 'user', time: { created: now - 12 * 60_000 } })
+  insertMessage('msg-quiet-live', 'sess-quiet', now - 11 * 60_000, { role: 'assistant', time: { created: now - 11 * 60_000 } })
+  insertPart('p-quiet-tool', 'msg-quiet-live', 'sess-quiet', now - 10 * 60_000, {
+    type: 'tool', tool: 'Bash', callID: 'call-quiet',
+    state: { status: 'running', input: { command: 'make build' } },
+  })
+  // A turn older than the old 30-minute cap: outcome absent (crash never
+  // recorded), message still uncompleted — hours-long turns are real.
+  insertSession('sess-stall', 'Z 长任务', now - 60 * 60_000)
+  insertMessage('msg-stall', 'sess-stall', now - 60 * 60_000, { role: 'assistant', time: { created: now - 60 * 60_000 } })
   // Too old to list in any form.
   insertSession('sess-old', 'Z 旧任务', now - 2 * 3600_000)
 }
@@ -186,6 +201,14 @@ test('merges ZCode sessions into the LAN session list', async () => {
   assert.ok(errored, 'errored ZCode session is listed')
   assert.equal(errored.running, false)
   assert.equal(errored.outcome, 'error')
+  // The reported failure modes: a quiet tool run under a stale outcome and an
+  // hours-old in-flight turn are both running — never falsely finished.
+  const quiet = body.items.find((item) => item.sessionId === 'z:sess-quiet')
+  assert.ok(quiet, 'quiet tool run is listed')
+  assert.equal(quiet.running, true, 'stale outcome must not settle a turn with a running tool part')
+  const stall = body.items.find((item) => item.sessionId === 'z:sess-stall')
+  assert.ok(stall, 'long in-flight turn is listed')
+  assert.equal(stall.running, true, 'an uncompleted message outlasts the old 30 min cap')
   assert.equal(body.items.find((item) => item.sessionId === 'z:sess-old'), undefined)
 })
 
