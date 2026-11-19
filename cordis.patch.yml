@@ -33,5 +33,9 @@
           pollMs: 30000
           # 首次启动回填全部历史会话（~/.dsh/sessions 里的存量）
           backfill: true
-          # 是否连 assistant/message.stream（逐 token 副本）一起存；默认丢弃省 4/5 体积
+          # 归档模式：text（默认，只存对话文本：用户提问 + 助手正文/思考）| full（完整事件流）
+          mode: text
+          # 同时归档 ZCode 会话的对话文本（读 ~/.zcode/cli/db/db.sqlite，只读）
+          zcode: true
+          # 仅 full 模式有意义：是否连 assistant/message.stream（逐 token 副本）一起存
           storeStream: false

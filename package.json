@@ -1,7 +1,7 @@
 {
   "name": "lx_dsh_peek",
-  "version": "0.10.0",
-  "description": "Read-only, no-input, light-themed LAN peek at active DSH and ZCode sessions, plus host-injected font, taller-composer overrides for the official DSH UI (no patched DMG), and an always-on session archive that mirrors every durable session event (user text, assistant text and reasoning, tool calls and results, turn boundaries) into the NAS PostgreSQL through /api/dsh/archive — full-log paging, JSONL spool on outage, JWT auto-refresh. HTTP bootstrap for the initial transcript and one multiplexed SSE for live deltas/events, live reasoning and tool calls, reconnect baseline hydration, bounded tail rendering with optional single-text-buffer terminal mode, background-command output, subagent-aware follow, completion flash, screen-wake fallback, 1/2/3/4 panes and orientation-aware layout.",
+  "version": "0.11.0",
+  "description": "Read-only, no-input, light-themed LAN peek at active DSH and ZCode sessions, plus host-injected font, taller-composer overrides for the official DSH UI (no patched DMG), and an always-on session archive that mirrors the conversation text of every DSH and ZCode session (your questions, assistant prose and reasoning) into the NAS PostgreSQL through /api/dsh/archive — full-log paging, JSONL spool on outage, JWT auto-refresh. HTTP bootstrap for the initial transcript and one multiplexed SSE for live deltas/events, live reasoning and tool calls, reconnect baseline hydration, bounded tail rendering with optional single-text-buffer terminal mode, background-command output, subagent-aware follow, completion flash, screen-wake fallback, 1/2/3/4 panes and orientation-aware layout.",
   "type": "module",
   "main": "src/index.js",
   "exports": {

@@ -254,6 +254,7 @@ export function apply(ctx, config) {
   }
   const archiver = createArchiver({
     ctx,
+    zcode: config?.zcode === false ? undefined : zcode,
     config: { enabled: true, ...config?.archive },
     log: (line) => console.error(line),
   })

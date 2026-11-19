@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0 — 2026-11-19
+
+- **Archive slims down to the conversation.** The first release mirrored the complete durable event log — 155 179 rows / 393 MB after one backfill, of which tool calls, tool results and step/job/request bookkeeping were 4/5 of the bytes and unreadable. The default is now `mode: text`: only your questions, the assistant's prose and its reasoning blocks (`[思考] …`) plus one title row per session, sent as pre-extracted text with **no event payload**. `mode: full` keeps the old behaviour for anyone who wants the execution trace. Measured JSONL/text for the same history: ~21 k rows / ~36 MB of text instead of 155 k rows.
+- **ZCode conversations are archived too.** `pollZcode()` reads ZCode's read-only SQLite through the existing adapter (`exportSessions` / `exportMessages`, new), and stores its user/assistant text under `z:`-prefixed session ids — only sessions whose `time_updated` moved are re-read, in-flight assistant messages are skipped until settled so their stored text is final, and `seq` is the raw message index so numbering never shifts.
+- Server side: ingest accepts text-only events (`text` wins over payload extraction), stores `payload = NULL`, and drops the `pg_trgm` GIN index together with non-conversation rows (migration 089) — that index alone was 109 MB for text nobody searches.
+
 ## 0.10.0 — 2026-11-19
 
 - Add **session archive**: the plugin now mirrors every DSH session's durable event stream into the NAS PostgreSQL (`dayly_service` tables `dsh_sessions` / `dsh_events`) through the new `/api/dsh/archive/*` endpoints — user text, assistant text, reasoning blocks, tool calls and results, turn/step boundaries, approvals and titles, append-only and deduplicated by `(session_id, seq)`. This exists because the hand-written `nohup.md` summary cannot answer "which conversation did I have three weeks ago" when several agents run in parallel.

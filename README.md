@@ -210,12 +210,16 @@ output: every durable Session event is mirrored into PostgreSQL on the NAS
 (`dayly_service`, tables `dsh_sessions` / `dsh_events`), independent of whether
 anyone is watching the page.
 
-**What is stored.** `user/message`, `assistant/message` (text blocks, reasoning
-blocks, tool calls), `tool/call`, `tool/result`, `turn/*`, `step/*`,
-`approval/*`, `todo/write`, `session/title`, `compaction/*`, `subagent/*` — the
-durable log, append-only, deduplicated by `(session_id, seq)`. Only
-`assistant/message.stream` (the per-token duplicate of those content blocks,
-~79 % of the bytes) is dropped unless `storeStream: true`.
+**What is stored.** Default `mode: text` keeps the **conversation only** — your
+questions, the assistant's prose and its reasoning blocks (`[思考] …`), plus one
+`session/title` row per session. Tool calls, tool output, step/job/request
+bookkeeping are **not** archived: they were 4/5 of the bytes and unreadable.
+Set `mode: full` to mirror the complete durable event log instead (every event,
+`payload` included, deduplicated by `(session_id, seq)`).
+
+The same table also receives **ZCode** conversations (`z:`-prefixed session ids,
+read-only from `~/.zcode/cli/db/db.sqlite`) so "what did I ask that agent"
+covers both harnesses.
 
 **Why it cannot lose messages.** Three gaps in the viewer do not apply here:
 

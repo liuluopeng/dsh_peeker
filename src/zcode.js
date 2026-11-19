@@ -646,5 +646,72 @@ export function createZcodeSource({ enabled = true, dbPath, log = () => {} } = {
     closeDb()
   }
 
-  return { list, bootstrap, watch, dispose, runningState, sessionRow }
+  /**
+   * Every non-archived, non-deleted session, newest first — the archive's
+   * source list (the page's `list()` is bounded to live/recent ones).
+   * @param {number} [limit]
+   */
+  async function exportSessions(limit = 800) {
+    if (!enabled || closed) return []
+    const rows = await query(
+      `SELECT id, title, directory, time_updated, time_archived, time_deleted
+       FROM session
+       ORDER BY time_updated DESC
+       LIMIT ?`,
+      limit,
+    )
+    return rows
+      .filter((row) => !row.time_deleted && !row.time_archived)
+      .map((row) => ({
+        id: String(row.id),
+        title: String(row.title ?? ''),
+        directory: String(row.directory ?? ''),
+        updatedAt: Number(row.time_updated) || 0,
+      }))
+  }
+
+  /**
+   * The conversation text of one session (user questions + assistant prose and
+   * reasoning), in raw message order. Tool parts are dropped on purpose: the
+   * archive stores conversation, not execution traces.
+   *
+   * `seq` is the raw message position, so a message that is still streaming
+   * does not shift the numbers of the ones already archived.
+   *
+   * @param {string} rawId ZCode session id (without the `z:` prefix)
+   * @returns {Promise<Array<{ seq: number, role: 'user' | 'assistant', time: number, text: string }>>}
+   */
+  async function exportMessages(rawId) {
+    if (!enabled || closed) return []
+    const messages = await query(
+      `SELECT id, data, time_created FROM message
+       WHERE session_id = ? ORDER BY time_created, id`,
+      rawId,
+    )
+    const out = []
+    for (let index = 0; index < messages.length; index += 1) {
+      const message = messages[index]
+      const data = safeParse(message.data)
+      const role = data.role
+      if (role !== 'user' && role !== 'assistant') continue
+      if (role === 'user' && data.metadata?.visibility === 'model-only') continue
+      // An in-flight assistant message keeps growing; archive it once settled so
+      // the stored text is final (the next poll picks it up after completion).
+      if (role === 'assistant' && !completedOf(message.data)) continue
+      const parts = await messageParts(message.id)
+      const texts = []
+      for (const part of parts) {
+        const partData = safeParse(part.data)
+        if (typeof partData.text !== 'string' || partData.text.trim() === '') continue
+        if (partData.type === 'reasoning') texts.push(`[思考] ${partData.text.trim()}`)
+        else if (partData.type === 'text') texts.push(partData.text.trim())
+      }
+      const text = texts.join('\n')
+      if (text === '') continue
+      out.push({ seq: index, role, time: Number(message.time_created) || 0, text })
+    }
+    return out
+  }
+
+  return { list, bootstrap, watch, dispose, runningState, sessionRow, exportSessions, exportMessages }
 }

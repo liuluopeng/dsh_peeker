@@ -158,6 +158,7 @@ test('backfills the whole log, captures live events and spools failures', async 
       flushMs: 200,
       pollMs: 60_000,
       backfill: true,
+      mode: 'full',
       home,
     },
     log: () => {},
@@ -211,6 +212,7 @@ test('a failing NAS spools events and delivers them once it recovers', async () 
       flushMs: 100,
       pollMs: 60_000,
       backfill: true,
+      mode: 'full',
       home,
     },
     log: () => {},
@@ -303,6 +305,7 @@ test('refreshes an expired token through the login endpoint', async () => {
       flushMs: 100,
       pollMs: 60_000,
       backfill: true,
+      mode: 'full',
       home,
     },
     log: () => {},
@@ -319,5 +322,71 @@ test('refreshes an expired token through the login endpoint', async () => {
   } finally {
     archiver.stop()
     await new Promise((resolve) => server.close(resolve))
+  }
+})
+
+test('text mode ships conversation text only, without event payloads', async () => {
+  const events = [
+    { type: 'step/start', seq: 0, time: 1, data: { turn: 1, step: 1 } },
+    { type: 'user/message', seq: 1, time: 2, data: { content: [{ type: 'text', text: '帮我看下 TTML' }] } },
+    { type: 'tool/call', seq: 2, time: 3, data: { name: 'bash', arguments: '{"command":"ls"}' } },
+    { type: 'tool/result', seq: 3, time: 4, data: { message: { content: [{ type: 'text', text: 'a'.repeat(5000) }] } } },
+    {
+      type: 'assistant/message',
+      seq: 4,
+      time: 5,
+      data: {
+        turn: 1,
+        step: 1,
+        message: {
+          content: [
+            { type: 'reasoning', text: '先定位整句分组' },
+            { type: 'text', text: '已经修好了' },
+            { type: 'tool-call', name: 'bash', arguments: '{"command":"cargo test"}' },
+          ],
+        },
+      },
+    },
+    { type: 'session/title', seq: 5, time: 6, data: { title: 'TTML 时间修复' } },
+  ]
+  const controller = fakeController(events)
+  const ctx = fakeContext(controller, events)
+  const nas = await fakeNas()
+  const home = mkdtempSync(join(tmpdir(), 'peek-archive-text-'))
+  const archiver = createArchiver({
+    ctx,
+    config: {
+      apiBase: nas.base,
+      token: 'header.payload.signature',
+      batch: 100,
+      flushMs: 100,
+      pollMs: 60_000,
+      backfill: true,
+      home,
+    },
+    log: () => {},
+  })
+  try {
+    archiver.poll()
+    await archiver.flush()
+    await waitFor(() => archiver.status().queued === 0 && nas.received.length > 0, { timeoutMs: 5000 })
+    await archiver.flush()
+    const delivered = nas.received.flatMap((batch) => batch.events)
+    // Only conversation events survive: user message, assistant message, title.
+    assert.deepEqual(
+      delivered.map((event) => event.type).sort(),
+      ['assistant/message', 'session/title', 'user/message'],
+    )
+    for (const event of delivered) {
+      assert.equal('data' in event, false, 'text mode must not ship event payloads')
+      assert.equal(typeof event.text, 'string')
+      assert.ok(event.text.length > 0)
+    }
+    const assistant = delivered.find((event) => event.type === 'assistant/message')
+    assert.equal(assistant.text, '[思考] 先定位整句分组\n已经修好了')
+    assert.equal(archiver.status().mode, 'text')
+  } finally {
+    archiver.stop()
+    await nas.close()
   }
 })

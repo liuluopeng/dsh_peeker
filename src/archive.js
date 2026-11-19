@@ -47,6 +47,41 @@ const MAX_PAGES = 2000
 const DROP_TYPES = new Set(['session/end-seed'])
 
 /**
+ * Conversation-only event types. The archive keeps the user's questions and
+ * the assistant's prose plus reasoning — no tool calls, tool output, step or
+ * job bookkeeping (they were 4/5 of the bytes and unreadable).
+ */
+const TEXT_TYPES = new Set(['user/message', 'assistant/message', 'session/title'])
+
+/**
+ * Extract the human-readable text of one event: user text, assistant text and
+ * reasoning blocks. Tool-call blocks are skipped by design.
+ * @param {string} kind event type
+ * @param {any} data event data
+ * @returns {string}
+ */
+export function conversationText(kind, data) {
+  if (kind === 'session/title') {
+    return typeof data?.title === 'string' ? data.title.trim() : ''
+  }
+  const content = kind === 'assistant/message' || kind === 'system/message'
+    ? data?.message?.content
+    : kind === 'tool/result'
+      ? data?.message?.content
+      : data?.content
+  if (typeof content === 'string') return content.trim()
+  if (!Array.isArray(content)) return ''
+  const parts = []
+  for (const block of content) {
+    const text = typeof block?.text === 'string' ? block.text.trim() : ''
+    if (text === '') continue
+    if (block.type === 'text') parts.push(text)
+    else if (block.type === 'reasoning') parts.push(`[思考] ${text}`)
+  }
+  return parts.join('\n')
+}
+
+/**
  * Read a token's remaining lifetime from its JWT payload.
  * @param {string} token
  * @returns {{ expiresAt: number | null, daysLeft: number | null }}
@@ -87,10 +122,11 @@ export function compactEvent(event, storeStream) {
  * @param {number} archivedSeq last seq already accepted by the NAS
  * @returns {boolean}
  */
-export function shouldArchive(event, archivedSeq) {
+export function shouldArchive(event, archivedSeq, mode = 'text') {
   if (event === null || typeof event !== 'object') return false
   if (typeof event.type !== 'string' || !Number.isSafeInteger(event.seq)) return false
   if (DROP_TYPES.has(event.type)) return false
+  if (mode !== 'full' && !TEXT_TYPES.has(event.type)) return false
   return event.seq > archivedSeq
 }
 
@@ -196,7 +232,7 @@ function createClient({ base, token, insecure }) {
  * @param {(line: string) => void} [options.log]
  * @returns {{ status: () => object, stop: () => void }}
  */
-export function createArchiver({ ctx, config, log = (line) => console.error(line) }) {
+export function createArchiver({ ctx, config, zcode, log = (line) => console.error(line) }) {
   const enabled = config?.enabled !== false
   const apiBase = String(config?.apiBase ?? 'http://192.168.31.58:23000')
   let token = String(config?.token ?? process.env.LX_DSH_ARCHIVE_TOKEN ?? '').trim()
@@ -211,6 +247,8 @@ export function createArchiver({ ctx, config, log = (line) => console.error(line
   const pollMs = Math.max(5000, Number(config?.pollMs ?? 30_000))
   const backfillEnabled = config?.backfill !== false
   const storeStream = config?.storeStream === true
+  const mode = config?.mode === 'full' ? 'full' : 'text'
+  const zcodeEnabled = config?.zcode !== false && zcode !== undefined && typeof zcode?.exportSessions === 'function'
 
   // Isolated directory (tests / second instance); defaults to the per-user home.
   const home = typeof config?.home === 'string' && config.home !== '' ? config.home : ARCHIVE_HOME
@@ -413,19 +451,32 @@ export function createArchiver({ ctx, config, log = (line) => console.error(line
         saveStateSoon()
       }
     }
-    if (options.force !== true && !shouldArchive(event, row.archivedSeq)) return
+    if (options.force !== true && !shouldArchive(event, row.archivedSeq, mode)) return
+    // 文本模式只发抽取好的对话文本，不带事件原文：体积从 393MB 降到几十 MB
+    const text = mode === 'full' ? '' : conversationText(event.type, event.data)
+    if (mode !== 'full' && text === '') return
     const key = `${session.id}:${event.seq}`
     if (inflight.has(key)) return
     inflight.add(key)
     rememberSession(session.header ?? { id: session.id }, row.title ?? '')
-    const compact = compactEvent(event, storeStream)
-    queue.push({
-      session_id: session.id,
-      seq: compact.seq,
-      type: compact.type,
-      time: Number.isFinite(Number(compact.time)) ? Number(compact.time) : null,
-      data: compact.data ?? {},
-    })
+    const compact = mode === 'full' ? compactEvent(event, storeStream) : null
+    queue.push(
+      mode === 'full'
+        ? {
+            session_id: session.id,
+            seq: compact.seq,
+            type: compact.type,
+            time: Number.isFinite(Number(compact.time)) ? Number(compact.time) : null,
+            data: compact.data ?? {},
+          }
+        : {
+            session_id: session.id,
+            seq: event.seq,
+            type: event.type,
+            time: Number.isFinite(Number(event.time)) ? Number(event.time) : null,
+            text,
+          },
+    )
     stats.queued = queue.length
     if (queue.length >= batch) void flush()
   }
@@ -714,7 +765,8 @@ export function createArchiver({ ctx, config, log = (line) => console.error(line
     rememberSession(header ?? { id: sessionId }, row.title ?? '')
     for (const event of events) {
       if (event === null || typeof event !== 'object') continue
-      enqueue({ id: sessionId, header: header ?? { id: sessionId } }, event, { force: true })
+      // 文本模式按模式过滤（非对话事件直接丢），完整模式全量重放
+      enqueue({ id: sessionId, header: header ?? { id: sessionId } }, event, { force: mode === 'full' })
     }
     const current = sessionRow(sessionId)
     current.backfilled = true
@@ -731,6 +783,54 @@ export function createArchiver({ ctx, config, log = (line) => console.error(line
   /** Enqueue one event using a session header that may be a wire snapshot header. */
   function enqueueFromHeader(header, event, options = {}) {
     enqueue({ id: header.id, header }, event, options)
+  }
+
+  /**
+   * Mirror ZCode sessions' conversation text. ZCode has no event firehose, so
+   * this polls its read-only SQLite: only sessions whose `time_updated` moved
+   * are re-read, and each session's messages are ordered by their raw index so
+   * already-archived seqs never shift.
+   */
+  async function pollZcode() {
+    if (!zcodeEnabled || stopped) return
+    let sessions = []
+    try {
+      sessions = await zcode.exportSessions()
+    } catch (error) {
+      stats.lastError = `zcode list: ${String(error?.message ?? error)}`
+      stats.lastErrorAt = Date.now()
+      return
+    }
+    for (const session of sessions) {
+      if (stopped) return
+      const sessionId = `z:${session.id}`
+      const row = sessionRow(sessionId)
+      if (row.backfilled && session.updatedAt <= row.checkedAt) continue
+      try {
+        const messages = await zcode.exportMessages(session.id)
+        rememberSession(
+          { id: sessionId, cwd: session.directory, origin: 'zcode' },
+          session.title,
+        )
+        for (const message of messages) {
+          enqueueText(
+            sessionId,
+            message.seq,
+            message.role === 'user' ? 'user/message' : 'assistant/message',
+            message.time,
+            message.text,
+          )
+        }
+        row.backfilled = true
+        row.checkedAt = session.updatedAt
+        stats.backfilled += 1
+        saveStateSoon()
+      } catch (error) {
+        stats.lastError = `zcode ${session.id}: ${String(error?.message ?? error)}`
+        stats.lastErrorAt = Date.now()
+      }
+    }
+    if (queue.length > 0) await flush()
   }
 
   async function pollSessions(signal) {
@@ -837,6 +937,7 @@ export function createArchiver({ ctx, config, log = (line) => console.error(line
     const poll = () => {
       if (stopped) return
       void pollSessions(pollController.signal)
+      void pollZcode()
     }
     // First sweep soon after mount (backfill all stored history), then periodic.
     const initial = setTimeout(poll, 2500)
@@ -891,6 +992,8 @@ export function createArchiver({ ctx, config, log = (line) => console.error(line
       }
       return {
         enabled,
+        mode,
+        zcode: { enabled: zcodeEnabled },
         controllerMethods: methods,
         apiBase,
         state: stats.state,

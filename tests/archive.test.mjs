@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { compactEvent, sessionMeta, shouldArchive, tokenLifetime } from '../src/archive.js'
+import { compactEvent, conversationText, sessionMeta, shouldArchive, tokenLifetime } from '../src/archive.js'
 
 /** Build an unsigned JWT-shaped token with the given payload. */
 function fakeJwt(payload) {
@@ -89,4 +89,32 @@ test('sessionMeta refuses headerless sessions', () => {
   assert.equal(sessionMeta(null), null)
   assert.equal(sessionMeta({}), null)
   assert.equal(sessionMeta({ id: '' }), null)
+})
+
+test('conversationText keeps prose and reasoning, drops tool calls', () => {
+  const assistant = {
+    message: {
+      content: [
+        { type: 'reasoning', text: ' 先看结构 ' },
+        { type: 'text', text: '答案在这' },
+        { type: 'tool-call', name: 'bash', arguments: '{"command":"ls -la"}' },
+      ],
+    },
+  }
+  const text = conversationText('assistant/message', assistant)
+  assert.equal(text, '[思考] 先看结构\n答案在这')
+  assert.equal(conversationText('user/message', { content: [{ type: 'text', text: '我的问题' }] }), '我的问题')
+  assert.equal(conversationText('session/title', { title: '某次会话' }), '某次会话')
+  assert.equal(conversationText('step/start', { turn: 1 }), '')
+})
+
+test('shouldArchive in text mode only keeps conversation types', () => {
+  const user = { type: 'user/message', seq: 3, time: 1, data: {} }
+  const tool = { type: 'tool/result', seq: 4, time: 1, data: {} }
+  const step = { type: 'step/end', seq: 5, time: 1, data: {} }
+  assert.equal(shouldArchive(user, -1), true)
+  assert.equal(shouldArchive(tool, -1), false)
+  assert.equal(shouldArchive(step, -1), false)
+  // full mode still keeps everything
+  assert.equal(shouldArchive(tool, -1, 'full'), true)
 })
