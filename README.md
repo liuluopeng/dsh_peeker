@@ -221,9 +221,13 @@ durable log, append-only, deduplicated by `(session_id, seq)`. Only
 
 | Viewer gap | Archive behaviour |
 |---|---|
-| one bounded `maxMessages` snapshot, no back-paging | `follow()` is opened only to read the log cursor, then abandoned (`break` before `next()`, so a cold session is never promoted/activated); the full log is walked backwards with `page({ beforeSeq })` until `hasMore === false` |
+| one bounded `maxMessages` snapshot, no back-paging | the whole log is read through `sessionQuery.observeSession()` — the Host service the Session Controller itself uses — which returns header + complete event prefix for attached *and* cold sessions without activating an Agent (no subagent address/mode guessing either). If that service is not composed, it falls back to `follow()` (cursor only, abandoned before `next()` so a cold session is never promoted) plus backward `page({ beforeSeq })` until `hasMore === false` |
 | strings shrunk to 4000 chars | payloads forwarded unshrunk |
 | capture only while a browser is connected | live capture is the Host `session/event` firehose |
+
+Batches are byte-bounded (~1.5 MB) and a `413` response halves the batch and
+retries, so a single oversized tool result cannot wedge the queue; per-request
+session rows are narrowed to the sessions that batch actually references.
 
 Delivery is at-least-once: a failed POST is written to
 `~/.dsh/lx-dsh-peek-archive/spool/*.json` and retried until the NAS accepts it,
@@ -265,7 +269,7 @@ The first test boots the plugin with a mock `sessionController` and `jobControll
 
 - `src/index.js` — Host plugin, HTTP/SSE listener, session listing and snapshot budget, optional `jobController` forwarding, multiplexed per-session frames, official-UI font/width style injection, ZCode source wiring.
 - `src/zcode.js` — read-only ZCode adapter over `~/.zcode/cli/db/db.sqlite`: running detection, snapshot mapping, store-polling watcher.
-- `src/archive.js` — always-on session archive: live `session/event` capture, full-log backfill through `follow`/`page`, batched ingest to the NAS, JSONL spool on outage, JWT auto-refresh.
+- `src/archive.js` — always-on session archive: live `session/event` capture, full-log backfill through `sessionQuery.observeSession` (fallback `follow`/`page`), byte-bounded batches with `413` splitting, spool on outage, JWT auto-refresh.
 - `src/page.html` — light mobile page, active-task panes, one shared SSE connection, orientation layout, flash, recently-finished strip.
 - `cordis.patch.yml` — bundle layer that inserts the `lx-dsh-peek` row.
 - `tests/server.test.mjs`, `tests/zcode.test.mjs` — keyless mock tests.

@@ -430,17 +430,31 @@ export function createArchiver({ ctx, config, log = (line) => console.error(line
     if (queue.length >= batch) void flush()
   }
 
-  /** Write the current queue to a spool file so a NAS outage loses nothing. */
+  /**
+   * Write queued events to spool files so a NAS outage loses nothing.
+   * Files are byte-bounded (a spool file is replayed as one request, so an
+   * oversized one would keep bouncing off the server's body limit).
+   */
   function spillQueue() {
     if (queue.length === 0) return
     try {
       ensureDirs()
-      const name = `${String(Date.now()).padStart(14, '0')}-${process.pid}-${queue.length}.json`
-      const payload = { sessions: [...pendingMeta.values()], events: queue }
-      const tmp = join(spoolDir, `${name}.tmp`)
-      writeFileSync(tmp, JSON.stringify(payload))
-      renameSync(tmp, join(spoolDir, name))
-      stats.spooled += queue.length
+      let index = 0
+      while (index < queue.length) {
+        const chunk = takeBatchFrom(index)
+        if (chunk.length === 0) break
+        const name = `${String(Date.now()).padStart(14, '0')}-${process.pid}-${String(index).padStart(5, '0')}.json`
+        const referenced = new Set(chunk.map((event) => event.session_id))
+        const payload = {
+          sessions: [...pendingMeta.values()].filter((meta) => referenced.has(meta.session_id)),
+          events: chunk,
+        }
+        const tmp = join(spoolDir, `${name}.tmp`)
+        writeFileSync(tmp, JSON.stringify(payload))
+        renameSync(tmp, join(spoolDir, name))
+        stats.spooled += chunk.length
+        index += chunk.length
+      }
     } catch (error) {
       log(`[lx-dsh-peek] archive: spool write failed (keeping in memory): ${String(error?.message ?? error)}`)
       return
@@ -472,7 +486,7 @@ export function createArchiver({ ctx, config, log = (line) => console.error(line
         unlinkSync(file) // corrupt spool file: drop it rather than block forever
         return false
       }
-      await request('/api/dsh/archive/ingest', payload)
+      await postWithSplit(payload)
       try {
         unlinkSync(file)
       } catch {
@@ -489,9 +503,12 @@ export function createArchiver({ ctx, config, log = (line) => console.error(line
       return true
     }
     if (queue.length === 0) return false
-    const events = queue.slice(0, batch)
-    const sessions = [...pendingMeta.values()]
-    await request('/api/dsh/archive/ingest', { sessions, events })
+    const events = takeBatchFrom(0)
+    // Only ship the session rows this batch references: a long backfill touches
+    // every session, and the server (rightly) bounds rows per request.
+    const referenced = new Set(events.map((event) => event.session_id))
+    const sessions = [...pendingMeta.values()].filter((meta) => referenced.has(meta.session_id))
+    await postWithSplit({ sessions, events })
     queue = queue.slice(events.length)
     stats.queued = queue.length
     for (const event of events) {
@@ -503,6 +520,42 @@ export function createArchiver({ ctx, config, log = (line) => console.error(line
     stats.batches += 1
     saveStateSoon()
     return true
+  }
+
+  /**
+   * Take up to `batch` events from `from`, stopping early when the serialized
+   * batch would exceed the byte budget so one oversized tool result cannot
+   * trigger a 413. The first event is always taken.
+   */
+  function takeBatchFrom(from = 0) {
+    const budget = Math.max(64 * 1024, Number(config?.batchBytes ?? 1_500_000))
+    const events = []
+    let bytes = 0
+    for (let index = from; index < queue.length; index += 1) {
+      const event = queue[index]
+      if (events.length >= batch) break
+      const size = 120 + JSON.stringify(event).length
+      if (events.length > 0 && bytes + size > budget) break
+      events.push(event)
+      bytes += size
+    }
+    return events
+  }
+
+  /**
+   * POST one batch, halving it on 413 (a spool file written by an older build,
+   * or one huge event, must not wedge the queue forever).
+   */
+  async function postWithSplit(payload) {
+    try {
+      return await request('/api/dsh/archive/ingest', payload)
+    } catch (error) {
+      const events = Array.isArray(payload?.events) ? payload.events : []
+      if (Number(error?.status) !== 413 || events.length <= 1) throw error
+      const mid = Math.ceil(events.length / 2)
+      await postWithSplit({ sessions: payload.sessions, events: events.slice(0, mid) })
+      return postWithSplit({ sessions: [], events: events.slice(mid) })
+    }
   }
 
   /** Drain as much as the NAS accepts right now. */
@@ -563,96 +616,99 @@ export function createArchiver({ ctx, config, log = (line) => console.error(line
     flushTimer.unref?.()
   }
 
-  function addressFor(header) {
-    if (header?.origin === 'subagent' && typeof header.parentSession === 'string') {
-      return {
-        continuable: {
-          kind: 'subagent',
-          parentSessionId: header.parentSession,
-          childSessionId: header.id,
-          mode: 'continuable',
-        },
-        oneShot: {
-          kind: 'subagent',
-          parentSessionId: header.parentSession,
-          childSessionId: header.id,
-          mode: 'one-shot',
-        },
-      }
-    }
-    return { continuable: { kind: 'session', sessionId: header.id } }
-  }
-
   /**
-   * Read the opening snapshot of one session and immediately abandon the
-   * stream. Breaking before the next iteration is what avoids the "prepared
-   * cold session" promotion: `follow` only activates an Agent after the
-   * snapshot is consumed further.
+   * Read one session's whole durable log without activating an Agent.
+   *
+   * Preferred: `sessionQuery.observeSession()` — the same Host service the
+   * Session Controller uses internally. It returns the header plus the complete
+   * event prefix for attached and cold sessions alike, so no subagent address or
+   * mode has to be guessed. Falls back to `follow` (cursor only) + backward
+   * `page` when that service is not composed.
+   *
+   * @param {string} sessionId
+   * @param {AbortSignal} [signal]
+   * @returns {Promise<{ header: any, events: any[] }>}
    */
-  async function readCursor(addressCandidates, signal) {
-    let lastError = null
-    for (const address of addressCandidates) {
-      const controller = new AbortController()
-      const onAbort = () => controller.abort()
-      signal?.addEventListener('abort', onAbort, { once: true })
+  async function readLog(sessionId, signal) {
+    const query = ctx.sessionQuery
+    if (query !== undefined && typeof query.observeSession === 'function') {
+      const observation = await query.observeSession(sessionId, {
+        ...(signal === undefined ? {} : { signal }),
+        projectionMode: 'none',
+      })
       try {
-        const frames = ctx.sessionController.follow({ address, maxMessages: 1 }, controller.signal)
-        for await (const frame of frames) {
-          if (frame?.type === 'snapshot') return { snapshot: frame, address }
+        return {
+          header: observation?.header ?? { id: sessionId },
+          events: Array.isArray(observation?.events) ? observation.events : [],
         }
-        throw new Error('follow ended without a snapshot')
-      } catch (error) {
-        lastError = error
-        const modeIssue = /subagent\/(unauthorized|not-found|catalog-diagnostic)/.test(String(error?.message ?? ''))
-        if (!modeIssue) throw error
       } finally {
-        controller.abort()
-        signal?.removeEventListener('abort', onAbort)
+        try {
+          observation?.[Symbol.dispose]?.()
+        } catch {
+          // lease already released
+        }
       }
     }
-    throw lastError ?? new Error('follow failed')
+    return readLogByPage(sessionId, signal)
   }
 
-  /** Walk one session's whole log backwards and enqueue everything not stored. */
-  async function backfillSession(sessionId, addressCandidates, signal) {
-    const { snapshot, address } = await readCursor(addressCandidates, signal)
-    const row = sessionRow(sessionId)
-    rememberSession(snapshot.header, row.title ?? '')
-    const records = Array.isArray(snapshot.records) ? snapshot.records : []
-    for (const record of records) {
-      if (record?.type !== 'event') continue
-      enqueueFromHeader(snapshot.header, compactEvent(record.event, storeStream), { force: true })
-    }
-    const cursor = Number.isSafeInteger(snapshot.cursor) ? snapshot.cursor : -1
-    if (backfillEnabled && cursor > 0) {
-      let beforeSeq = records.length > 0 ? records[0].event?.seq : undefined
+  /** Fallback backfill: learn the cursor from a follow opening, then page back. */
+  async function readLogByPage(sessionId, signal) {
+    const controller = new AbortController()
+    const onAbort = () => controller.abort()
+    signal?.addEventListener('abort', onAbort, { once: true })
+    try {
+      const address = { kind: 'session', sessionId }
+      const frames = ctx.sessionController.follow({ address, maxMessages: 1 }, controller.signal)
+      let snapshot = null
+      for await (const frame of frames) {
+        if (frame?.type === 'snapshot') snapshot = frame
+        break // 拿到 opening 就断流：冷会话因此不会被 promote/激活
+      }
+      if (snapshot === null) throw new Error('follow returned no snapshot')
+      const events = (snapshot.records ?? [])
+        .filter((record) => record?.type === 'event')
+        .map((record) => record.event)
+      let beforeSeq = events.length > 0 ? events[0].seq : undefined
       let pages = 0
-      while (!stopped && !signal?.aborted && pages < MAX_PAGES) {
+      while (!stopped && pages < MAX_PAGES) {
         const page = await ctx.sessionController.page(
-          { address, throughSeq: cursor, beforeSeq, maxMessages: PAGE_MESSAGES },
-          signal,
+          { address, throughSeq: snapshot.cursor, beforeSeq, maxMessages: PAGE_MESSAGES },
+          controller.signal,
         )
-        const pageRecords = Array.isArray(page?.records) ? page.records : []
-        for (const record of pageRecords) {
-          if (record?.type !== 'event') continue
-          enqueueFromHeader(snapshot.header, compactEvent(record.event, storeStream), { force: true })
+        const records = Array.isArray(page?.records) ? page.records : []
+        for (const record of records) {
+          if (record?.type === 'event') events.push(record.event)
         }
-        if (page?.hasMore !== true || pageRecords.length === 0) break
-        const firstSeq = pageRecords[0].event?.seq
+        if (page?.hasMore !== true || records.length === 0) break
+        const firstSeq = records[0].event?.seq
         if (!Number.isSafeInteger(firstSeq) || firstSeq === beforeSeq) break
         beforeSeq = firstSeq
         pages += 1
       }
+      return { header: snapshot.header ?? { id: sessionId }, events }
+    } finally {
+      controller.abort()
+      signal?.removeEventListener('abort', onAbort)
+    }
+  }
+
+  async function backfillSession(sessionId, signal) {
+    const { header, events } = await readLog(sessionId, signal)
+    const row = sessionRow(sessionId)
+    rememberSession(header ?? { id: sessionId }, row.title ?? '')
+    for (const event of events) {
+      if (event === null || typeof event !== 'object') continue
+      enqueue({ id: sessionId, header: header ?? { id: sessionId } }, event, { force: true })
     }
     const current = sessionRow(sessionId)
     current.backfilled = true
     current.checkedAt = Date.now()
-    // The walk reached seq 0, so the whole log through `cursor` is queued:
-    // advance the high-water mark only now (a partial backfill keeps the old
-    // value and simply re-sends next poll, which the NAS deduplicates).
-    if (Number.isSafeInteger(cursor) && cursor > current.archivedSeq) {
-      current.archivedSeq = cursor
-    }
+    const highest = events.reduce(
+      (top, event) => (Number.isSafeInteger(event?.seq) && event.seq > top ? event.seq : top),
+      current.archivedSeq,
+    )
+    current.archivedSeq = highest
     stats.backfilled += 1
     saveStateSoon()
   }
@@ -683,17 +739,8 @@ export function createArchiver({ ctx, config, log = (line) => console.error(line
         rememberSession(header, row.title ?? '')
         const stale = !row.backfilled || Number(summary.updatedAt) > row.checkedAt
         if (!stale) continue
-        const addressCandidates = addressFor({
-          id,
-          origin: summary.origin,
-          parentSession: summary.parentSessionId,
-        })
         try {
-          await backfillSession(
-            id,
-            [addressCandidates.continuable, addressCandidates.oneShot].filter(Boolean),
-            signal,
-          )
+          await backfillSession(id, signal)
         } catch (error) {
           if (stopped || signal?.aborted) return
           row.checkedAt = now
@@ -802,8 +849,22 @@ export function createArchiver({ ctx, config, log = (line) => console.error(line
 
   return {
     status() {
+      let methods = []
+      try {
+        const target = ctx.sessionController
+        const names = new Set()
+        for (let proto = target; proto !== null && proto !== Object.prototype; proto = Object.getPrototypeOf(proto)) {
+          for (const name of Object.getOwnPropertyNames(proto)) {
+            if (name !== 'constructor') names.add(name)
+          }
+        }
+        methods = [...names].sort()
+      } catch {
+        methods = []
+      }
       return {
         enabled,
+        controllerMethods: methods,
         apiBase,
         state: stats.state,
         token: {

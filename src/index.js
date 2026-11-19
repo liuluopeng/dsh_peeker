@@ -23,7 +23,7 @@ import { createArchiver } from './archive.js'
 export const name = 'lx-dsh-peek'
 
 /** Wait for the Session Controller before mounting. */
-export const inject = ['sessionController']
+export const inject = ['sessionController', 'sessionQuery']
 
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',

@@ -40,45 +40,24 @@ function fakeLog(total) {
 }
 
 /** Minimal Session Controller stand-in matching the Host contract we use. */
-function fakeController(events, { followFrames = [] } = {}) {
-  const calls = { follow: 0, page: 0, requestedAfterSnapshot: false }
-  const messageSeqs = events.filter((event) => event.type === 'assistant/message').map((event) => event.seq)
+function fakeController(events, { inspectError = null } = {}) {
+  const calls = { inspect: 0, follow: 0, page: 0 }
   const controller = {
     calls,
     async list() {
       return { items: [{ sessionId: 'sess-1', updatedAt: 42, running: false, blank: false }] }
     },
+    // `inspect()` is NOT part of the exposed Remote face; the archive reads the
+    // log through sessionQuery instead, so a controller.inspect call is a bug.
+    // The archive must never open a follow stream (that would promote a cold
+    // session's Agent); a call here fails the test loudly.
     follow() {
       calls.follow += 1
-      let index = 0
-      const frames = [
-        {
-          type: 'snapshot',
-          header: { version: 4, id: 'sess-1', createdAt: 1, cwd: '/tmp/ws', isSeeded: false },
-          cursor: events.length - 1,
-          records: [{ type: 'event', event: events[events.length - 1] }],
-          hasMore: true,
-          projections: { asOfSeq: events.length - 1, values: {} },
-        },
-        ...followFrames,
-      ]
-      return (async function* stream() {
-        while (index < frames.length) {
-          const frame = frames[index]
-          index += 1
-          if (index > 1) calls.requestedAfterSnapshot = true
-          yield frame
-        }
-      })()
+      throw new Error('archive must not call follow()')
     },
-    async page(request) {
+    async page() {
       calls.page += 1
-      const end = Math.min(request.throughSeq + 1, request.beforeSeq ?? request.throughSeq + 1)
-      const messages = messageSeqs.filter((seq) => seq < end)
-      const take = messages.slice(-(request.maxMessages ?? 200))
-      const cut = take.length > 0 ? take[0] : end
-      const records = events.slice(cut, end).map((event) => ({ type: 'event', event }))
-      return { records, hasMore: cut > 0 }
+      throw new Error('archive must not call page()')
     },
   }
   return controller
@@ -107,11 +86,26 @@ async function fakeNas() {
 }
 
 /** Fake Host context: only the pieces the archiver touches. */
-function fakeContext(controller) {
+function fakeContext(controller, events = [], { inspectError = null } = {}) {
   const handlers = new Map()
+  const queryCalls = { observe: 0 }
   return {
     handlers,
     sessionController: controller,
+    sessionQuery: {
+      async observeSession() {
+        queryCalls.observe += 1
+        if (inspectError !== null) throw inspectError
+        const observation = {
+          header: { version: 4, id: 'sess-1', createdAt: 1, cwd: '/tmp/ws', isSeeded: false },
+          inheritedEventCount: 0,
+          events,
+        }
+        observation[Symbol.dispose] = () => {}
+        return observation
+      },
+    },
+    queryCalls,
     on(name, callback) {
       handlers.set(name, callback)
       return () => handlers.delete(name)
@@ -147,7 +141,7 @@ function waitFor(check, { timeoutMs = 8000, intervalMs = 25 } = {}) {
 test('backfills the whole log, captures live events and spools failures', async () => {
   const events = fakeLog(548)
   const controller = fakeController(events)
-  const ctx = fakeContext(controller)
+  const ctx = fakeContext(controller, events)
   const nas = await fakeNas()
   const home = mkdtempSync(join(tmpdir(), 'peek-archive-'))
   const archiver = createArchiver({
@@ -174,9 +168,10 @@ test('backfills the whole log, captures live events and spools failures', async 
     const seqs = new Set(delivered.map((event) => event.seq))
     assert.equal(seqs.size, 548, `delivered ${seqs.size}/548 unique events`)
     for (let seq = 0; seq < 548; seq += 1) assert.ok(seqs.has(seq), `missing seq ${seq}`)
-    // The first follow frame was taken and abandoned: no further frame requested.
-    assert.equal(controller.calls.follow, 1)
-    assert.equal(controller.calls.requestedAfterSnapshot, false)
+    // Full log came from sessionQuery (which never promotes); no follow/page.
+    assert.equal(ctx.queryCalls.observe, 1)
+    assert.equal(controller.calls.follow, 0)
+    assert.equal(controller.calls.page, 0)
     // Session metadata travelled once.
     assert.equal(nas.received[0].sessions[0].session_id, 'sess-1')
     assert.equal(nas.received[0].sessions[0].workspace, '/tmp/ws')
@@ -196,7 +191,7 @@ test('backfills the whole log, captures live events and spools failures', async 
 test('a failing NAS spools events and delivers them once it recovers', async () => {
   const events = fakeLog(80)
   const controller = fakeController(events)
-  const ctx = fakeContext(controller)
+  const ctx = fakeContext(controller, events)
   // Point at a closed port first: delivery must fail and spool, not drop.
   const nas = await fakeNas()
   const deadBase = nas.base
@@ -261,7 +256,7 @@ async function fakeNasOn(base) {
 test('refreshes an expired token through the login endpoint', async () => {
   const events = fakeLog(40)
   const controller = fakeController(events)
-  const ctx = fakeContext(controller)
+  const ctx = fakeContext(controller, events)
   const home = mkdtempSync(join(tmpdir(), 'peek-archive-login-'))
   const logins = []
   const received = []
