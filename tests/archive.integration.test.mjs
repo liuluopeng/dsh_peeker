@@ -89,10 +89,7 @@ async function fakeNas() {
 function fakeContext(controller, events = [], { inspectError = null } = {}) {
   const handlers = new Map()
   const queryCalls = { observe: 0 }
-  return {
-    handlers,
-    sessionController: controller,
-    sessionQuery: {
+  const sessionQuery = {
       async observeSession() {
         queryCalls.observe += 1
         if (inspectError !== null) throw inspectError
@@ -101,9 +98,17 @@ function fakeContext(controller, events = [], { inspectError = null } = {}) {
           inheritedEventCount: 0,
           events,
         }
-        observation[Symbol.dispose] = () => {}
-        return observation
-      },
+      observation[Symbol.dispose] = () => {}
+      return observation
+    },
+  }
+  return {
+    handlers,
+    sessionController: controller,
+    // Cordis resolves optional services through ctx.get(); a plain property read
+    // of an uninjected service throws, so the archiver uses this reflection API.
+    get(name) {
+      return name === 'sessionQuery' ? sessionQuery : undefined
     },
     queryCalls,
     on(name, callback) {
