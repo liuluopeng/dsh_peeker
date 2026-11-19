@@ -630,8 +630,12 @@ export function createArchiver({ ctx, config, log = (line) => console.error(line
    * @returns {Promise<{ header: any, events: any[] }>}
    */
   async function readLog(sessionId, signal) {
-    const query = ctx.sessionQuery
-    if (query !== undefined && typeof query.observeSession === 'function') {
+    // Resolved lazily through the reflection API: `sessionQuery` is not in the
+    // plugin's inject list (requiring it would make the whole peek plugin pending
+    // on a differently composed profile) and Cordis throws on a plain property
+    // read of an uninjected service.
+    const query = resolveSessionQuery()
+    if (query !== undefined && query !== null && typeof query.observeSession === 'function') {
       const observation = await query.observeSession(sessionId, {
         ...(signal === undefined ? {} : { signal }),
         projectionMode: 'none',
@@ -650,6 +654,17 @@ export function createArchiver({ ctx, config, log = (line) => console.error(line
       }
     }
     return readLogByPage(sessionId, signal)
+  }
+
+  /** Read an optional service without declaring it in the plugin's inject list. */
+  function resolveSessionQuery() {
+    try {
+      const service = ctx.get?.('sessionQuery')
+      if (service !== undefined && service !== null) return service
+    } catch {
+      // not composed
+    }
+    return undefined
   }
 
   /** Fallback backfill: learn the cursor from a follow opening, then page back. */

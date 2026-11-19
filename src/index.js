@@ -23,7 +23,10 @@ import { createArchiver } from './archive.js'
 export const name = 'lx-dsh-peek'
 
 /** Wait for the Session Controller before mounting. */
-export const inject = ['sessionController', 'sessionQuery']
+// `sessionQuery` is used opportunistically by the archiver (see archive.js);
+// requiring it here would keep the whole plugin pending on a profile that
+// composes a different session stack, so the peek page must stay independent.
+export const inject = ['sessionController']
 
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',

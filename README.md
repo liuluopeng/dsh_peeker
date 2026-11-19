@@ -221,13 +221,17 @@ durable log, append-only, deduplicated by `(session_id, seq)`. Only
 
 | Viewer gap | Archive behaviour |
 |---|---|
-| one bounded `maxMessages` snapshot, no back-paging | the whole log is read through `sessionQuery.observeSession()` — the Host service the Session Controller itself uses — which returns header + complete event prefix for attached *and* cold sessions without activating an Agent (no subagent address/mode guessing either). If that service is not composed, it falls back to `follow()` (cursor only, abandoned before `next()` so a cold session is never promoted) plus backward `page({ beforeSeq })` until `hasMore === false` |
+| one bounded `maxMessages` snapshot, no back-paging | the whole log is read through `sessionQuery.observeSession()` — the Host service the Session Controller itself uses — which returns header + complete event prefix for attached *and* cold sessions without activating an Agent (no subagent address/mode guessing either). That service is resolved lazily through `ctx.get()` because it is not in the plugin's `inject` list (requiring it would keep the entire peek plugin pending on a differently composed profile), and Cordis rejects a plain property read of an uninjected service. If it is not composed, the archive falls back to `follow()` (cursor only, abandoned before `next()` so a cold session is never promoted) plus backward `page({ beforeSeq })` until `hasMore === false` |
 | strings shrunk to 4000 chars | payloads forwarded unshrunk |
 | capture only while a browser is connected | live capture is the Host `session/event` firehose |
 
 Batches are byte-bounded (~1.5 MB) and a `413` response halves the batch and
 retries, so a single oversized tool result cannot wedge the queue; per-request
 session rows are narrowed to the sessions that batch actually references.
+A first full backfill of this machine's history measured 130 sessions /
+150 364 events / 45 event kinds / 385 MB with zero failures — two pre-v1
+format-v0 sessions are refused by the session-format migration itself and are
+reported rather than retried.
 
 Delivery is at-least-once: a failed POST is written to
 `~/.dsh/lx-dsh-peek-archive/spool/*.json` and retried until the NAS accepts it,
