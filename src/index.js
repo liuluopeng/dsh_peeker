@@ -17,6 +17,7 @@ import { createServer } from 'node:http'
 import { networkInterfaces } from 'node:os'
 
 import { createZcodeSource, isZcodeSessionId, ZCODE_PREFIX } from './zcode.js'
+import { createArchiver } from './archive.js'
 
 /** Plugin name used by Cordis diagnostics and loader display. */
 export const name = 'lx-dsh-peek'
@@ -243,6 +244,16 @@ export function apply(ctx, config) {
     dbPath: config?.zcodeDbPath,
     log: (message) => console.error(`[lx-dsh-peek] zcode: ${message}`),
   })
+  // 会话归档：把每个会话的完整事件流镜像到 NAS 的 PG（默认开启；无 token 时
+  // 只留在内存并在 /api/archive/status 里标 no-token，不改动监看行为）。
+  if (config?.archive !== undefined && (config.archive === null || typeof config.archive !== 'object')) {
+    throw new Error(`lx_dsh_peek: archive must be an object, got ${JSON.stringify(config.archive)}`)
+  }
+  const archiver = createArchiver({
+    ctx,
+    config: { enabled: true, ...config?.archive },
+    log: (line) => console.error(line),
+  })
   const fontStyle = `:root, body {
   --dsh-content-font-size: ${fontSize}px !important;
   --dsh-code-font-size: ${codeFontSize}px !important;
@@ -307,6 +318,16 @@ export function apply(ctx, config) {
     }
     if (url.pathname === '/api/health') {
       sendJson(res, 200, { ok: true })
+      return
+    }
+    if (url.pathname === '/api/archive/status') {
+      sendJson(res, 200, archiver.status())
+      return
+    }
+    if (url.pathname === '/api/archive/flush') {
+      // 手动催一次投递（页面/运维用；仍然只写 NAS，不碰会话）
+      await archiver.flush()
+      sendJson(res, 200, archiver.status())
       return
     }
     if (url.pathname === '/api/sessions') {
@@ -676,6 +697,7 @@ export function apply(ctx, config) {
     })
     return () => {
       disposed = true
+      try { archiver.stop() } catch { /* teardown is best effort */ }
       for (const entry of streams) {
         try { entry.stop() } catch { /* already gone */ }
         try { entry.res.end() } catch { /* already closed */ }

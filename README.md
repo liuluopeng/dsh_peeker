@@ -106,6 +106,12 @@ Set the actual sizes and width in `cordis.patch.yml`:
         # px min-height of the official input box; 0 keeps the official height.
         # The scroll area starts scrolling after composerHeight + 160px.
         composerHeight: 200
+        archive:
+          enabled: true
+          apiBase: http://192.168.31.58:23000
+          token: ''                                  # or username/passwordFile below
+          # username: dsh_archive
+          # passwordFile: ~/.dsh/lx-dsh-peek-archive/password
 ```
 
 The width has no official Settings row. The font Settings row still displays the official maximum (22/16/20); change the plugin config, not the Settings row. Keep the profile's `ui-theme` values within the official schema (22/16/20) so the theme plugin validates; the override supplies the larger rendered sizes.
@@ -189,6 +195,60 @@ Change the port, conversation width, or font sizes in `cordis.patch.yml`:
         # px min-height of the official input box; 0 keeps the official height.
         # The scroll area starts scrolling after composerHeight + 160px.
         composerHeight: 200
+        archive:
+          enabled: true
+          apiBase: http://192.168.31.58:23000
+          token: ''                                  # or username/passwordFile below
+          # username: dsh_archive
+          # passwordFile: ~/.dsh/lx-dsh-peek-archive/password
+```
+
+## Session archive (PG)
+
+The archive keeps the viewer's read-only promise and adds a second, always-on
+output: every durable Session event is mirrored into PostgreSQL on the NAS
+(`dayly_service`, tables `dsh_sessions` / `dsh_events`), independent of whether
+anyone is watching the page.
+
+**What is stored.** `user/message`, `assistant/message` (text blocks, reasoning
+blocks, tool calls), `tool/call`, `tool/result`, `turn/*`, `step/*`,
+`approval/*`, `todo/write`, `session/title`, `compaction/*`, `subagent/*` — the
+durable log, append-only, deduplicated by `(session_id, seq)`. Only
+`assistant/message.stream` (the per-token duplicate of those content blocks,
+~79 % of the bytes) is dropped unless `storeStream: true`.
+
+**Why it cannot lose messages.** Three gaps in the viewer do not apply here:
+
+| Viewer gap | Archive behaviour |
+|---|---|
+| one bounded `maxMessages` snapshot, no back-paging | `follow()` is opened only to read the log cursor, then abandoned (`break` before `next()`, so a cold session is never promoted/activated); the full log is walked backwards with `page({ beforeSeq })` until `hasMore === false` |
+| strings shrunk to 4000 chars | payloads forwarded unshrunk |
+| capture only while a browser is connected | live capture is the Host `session/event` firehose |
+
+Delivery is at-least-once: a failed POST is written to
+`~/.dsh/lx-dsh-peek-archive/spool/*.json` and retried until the NAS accepts it,
+so a NAS restart or an expired credential loses nothing.
+
+**Credentials.** Either paste a login JWT (30-day lifetime), or give the plugin
+an account and let it refresh itself:
+
+```yaml
+archive:
+  username: dsh_archive
+  passwordFile: ~/.dsh/lx-dsh-peek-archive/password   # chmod 600
+```
+
+A refreshed token is cached in `~/.dsh/lx-dsh-peek-archive/auth.json` (0600).
+`GET /api/archive/status` reports queue depth, spooled batches, failures, and
+remaining token days; `POST`-less `GET /api/archive/flush` forces a delivery
+attempt.
+
+**Reading it back** (JWT required):
+
+```sh
+curl -H "Authorization: Bearer $JWT" "$NAS/api/dsh/archive/sessions?q=新概念"
+curl -H "Authorization: Bearer $JWT" "$NAS/api/dsh/archive/search?q=TTML"
+curl -H "Authorization: Bearer $JWT" "$NAS/api/dsh/archive/sessions/<id>/events?limit=100"
 ```
 
 ## Development
@@ -196,7 +256,7 @@ Change the port, conversation width, or font sizes in `cordis.patch.yml`:
 No runtime dependencies; the plugin uses only Node built-ins (`node:sqlite` needs Node ≥ 22.5 for the ZCode source; without it the rest still works).
 
 ```sh
-node --test tests/server.test.mjs tests/zcode.test.mjs
+node --test tests/server.test.mjs tests/zcode.test.mjs tests/archive.test.mjs tests/archive.integration.test.mjs
 ```
 
 The first test boots the plugin with a mock `sessionController` and `jobController`, checks the page (including its no-input, hidden-scrollbar, tail-only markers), session listing, the SSE snapshot/delta/job-output/flash stream, multiplexing two sessions over one tagged stream, the read-only response, the injected official-UI font and conversation-width styles, and invalid-width rejection. The second builds a temporary SQLite store with ZCode's schema, seeds a running task (in-flight assistant message, streaming text part, running tool part) and a finished one, and asserts the merged session list, the bootstrap event mapping, and the watcher's live deltas plus its completion flash. The page uses CSS `@media (orientation: landscape)` for layout and `matchMedia` for the footer's `竖屏`/`横屏` label.
@@ -205,9 +265,11 @@ The first test boots the plugin with a mock `sessionController` and `jobControll
 
 - `src/index.js` — Host plugin, HTTP/SSE listener, session listing and snapshot budget, optional `jobController` forwarding, multiplexed per-session frames, official-UI font/width style injection, ZCode source wiring.
 - `src/zcode.js` — read-only ZCode adapter over `~/.zcode/cli/db/db.sqlite`: running detection, snapshot mapping, store-polling watcher.
+- `src/archive.js` — always-on session archive: live `session/event` capture, full-log backfill through `follow`/`page`, batched ingest to the NAS, JSONL spool on outage, JWT auto-refresh.
 - `src/page.html` — light mobile page, active-task panes, one shared SSE connection, orientation layout, flash, recently-finished strip.
 - `cordis.patch.yml` — bundle layer that inserts the `lx-dsh-peek` row.
 - `tests/server.test.mjs`, `tests/zcode.test.mjs` — keyless mock tests.
+- `tests/archive.test.mjs`, `tests/archive.integration.test.mjs` — archive pure helpers, plus a fake Host context and fake NAS proving full-log backfill, no promotion, live capture, spool-and-recover, and token refresh.
 
 ## License
 

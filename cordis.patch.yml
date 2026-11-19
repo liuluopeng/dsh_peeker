@@ -16,3 +16,22 @@
         # Taller official input box in px; 0 keeps the official height. The
         # scroll area starts scrolling after composerHeight + 160px.
         composerHeight: 200
+        # ── 会话归档（2026-11-19）：把每个会话的完整事件流镜像到 NAS 的 PG ──
+        # 默认开启；没有凭证时只留在内存、在 /api/archive/status 标记 no-token。
+        archive:
+          enabled: true
+          # NAS 地址：LAN 内直连（Caddy 自签证书，insecureTls 默认接受）
+          apiBase: http://192.168.31.58:23000
+          # 凭证二选一：粘贴登录 JWT（30 天），或给账号让它自动续期
+          token: ''
+          # username: dsh_archive
+          # passwordFile: ~/.dsh/lx-dsh-peek-archive/password
+          # 每批事件数 / 投递间隔（毫秒）
+          batch: 200
+          flushMs: 3000
+          # 会话列表轮询间隔（发现新会话/需回填的历史会话）
+          pollMs: 30000
+          # 首次启动回填全部历史会话（~/.dsh/sessions 里的存量）
+          backfill: true
+          # 是否连 assistant/message.stream（逐 token 副本）一起存；默认丢弃省 4/5 体积
+          storeStream: false
