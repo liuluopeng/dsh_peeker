@@ -782,6 +782,18 @@ export function createArchiver({ ctx, config, log = (line) => console.error(line
       stats.state = 'disabled'
       return
     }
+    // The archive must never take the viewer down: any setup failure degrades
+    // to "archive off" and keeps the peek page serving.
+    try {
+      startUnsafe()
+    } catch (error) {
+      stats.state = 'error'
+      stats.lastError = `start: ${String(error?.message ?? error)}`
+      log(`[lx-dsh-peek] archive: start failed, viewer unaffected: ${stats.lastError}`)
+    }
+  }
+
+  function startUnsafe() {
     ensureDirs()
     loadState()
     loadAuthFile()
