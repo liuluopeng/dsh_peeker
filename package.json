@@ -37,7 +37,7 @@
     "dsh": ">=0.2.0-rc.1 <0.3.0"
   },
   "scripts": {
-    "check": "node --check src/index.js && node --check src/zcode.js",
+    "check": "node --check src/index.js && node --check src/zcode.js && node --check src/archive.js",
     "test": "node --test tests/server.test.mjs tests/zcode.test.mjs tests/archive.test.mjs tests/archive.integration.test.mjs"
   },
   "dsh": {
