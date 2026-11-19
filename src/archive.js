@@ -269,6 +269,8 @@ export function createArchiver({ ctx, config, zcode, log = (line) => console.err
     lastSuccessAt: 0,
     lastErrorAt: 0,
     state: enabled ? 'starting' : 'disabled',
+    zcodeSessions: 0,
+    zcodeMessages: 0,
   }
   /** @type {any[]} */
   let queue = []
@@ -307,6 +309,7 @@ export function createArchiver({ ctx, config, zcode, log = (line) => console.err
             archivedSeq: Number.isSafeInteger(row.archivedSeq) ? row.archivedSeq : -1,
             backfilled: row.backfilled === true,
             checkedAt: Number.isFinite(Number(row.checkedAt)) ? Number(row.checkedAt) : 0,
+            ...(row.unreadable === true ? { unreadable: true } : {}),
             ...(typeof row.title === 'string' && row.title !== '' ? { title: row.title } : {}),
           }
         }
@@ -477,6 +480,29 @@ export function createArchiver({ ctx, config, zcode, log = (line) => console.err
             text,
           },
     )
+    stats.queued = queue.length
+    if (queue.length >= batch) void flush()
+  }
+
+  /**
+   * Queue an already-extracted conversation line. Used by the ZCode path (its
+   * source has no DSH event shape) and available to any caller that prepared
+   * its own text.
+   */
+  function enqueueText(sessionId, seq, type, time, text) {
+    if (!enabled || stopped || text === '') return
+    const row = sessionRow(sessionId)
+    if (!Number.isSafeInteger(seq) || seq <= row.archivedSeq) return
+    const key = `${sessionId}:${seq}`
+    if (inflight.has(key)) return
+    inflight.add(key)
+    queue.push({
+      session_id: sessionId,
+      seq,
+      type,
+      time: Number.isFinite(Number(time)) ? Number(time) : null,
+      text,
+    })
     stats.queued = queue.length
     if (queue.length >= batch) void flush()
   }
@@ -799,8 +825,13 @@ export function createArchiver({ ctx, config, zcode, log = (line) => console.err
     } catch (error) {
       stats.lastError = `zcode list: ${String(error?.message ?? error)}`
       stats.lastErrorAt = Date.now()
+      log(`[lx-dsh-peek] archive: zcode list failed: ${String(error?.message ?? error)}`)
       return
     }
+    if (sessions.length > 0 && stats.zcodeSessions === 0) {
+      log(`[lx-dsh-peek] archive: zcode store has ${sessions.length} sessions to mirror`)
+    }
+    stats.zcodeSessions = sessions.length
     for (const session of sessions) {
       if (stopped) return
       const sessionId = `z:${session.id}`
@@ -812,6 +843,10 @@ export function createArchiver({ ctx, config, zcode, log = (line) => console.err
           { id: sessionId, cwd: session.directory, origin: 'zcode' },
           session.title,
         )
+        stats.zcodeMessages += messages.length
+        if (messages.length > 0 && stats.zcodeMessages === messages.length) {
+          log(`[lx-dsh-peek] archive: zcode first session yields ${messages.length} conversation messages`)
+        }
         for (const message of messages) {
           enqueueText(
             sessionId,
@@ -828,6 +863,7 @@ export function createArchiver({ ctx, config, zcode, log = (line) => console.err
       } catch (error) {
         stats.lastError = `zcode ${session.id}: ${String(error?.message ?? error)}`
         stats.lastErrorAt = Date.now()
+        log(`[lx-dsh-peek] archive: ${stats.lastError}`)
       }
     }
     if (queue.length > 0) await flush()
@@ -852,6 +888,7 @@ export function createArchiver({ ctx, config, zcode, log = (line) => console.err
           origin: summary.origin,
         }
         rememberSession(header, row.title ?? '')
+        if (row.unreadable === true) continue
         const stale = !row.backfilled || Number(summary.updatedAt) > row.checkedAt
         if (!stale) continue
         try {
@@ -859,9 +896,16 @@ export function createArchiver({ ctx, config, zcode, log = (line) => console.err
         } catch (error) {
           if (stopped || signal?.aborted) return
           row.checkedAt = now
-          stats.lastError = `backfill ${id}: ${String(error?.message ?? error)}`
+          const message = String(error?.message ?? error)
+          stats.lastError = `backfill ${id}: ${message}`
           stats.lastErrorAt = now
-          log(`[lx-dsh-peek] archive: ${stats.lastError}`)
+          // 格式不可读的老会话（如 format-v0）重试也不会成功：标记后不再刷日志
+          if (/refuses this format|not found|SESSION_NOT_FOUND/i.test(message)) {
+            row.unreadable = true
+            log(`[lx-dsh-peek] archive: skip unreadable session ${id} (${message.slice(0, 80)})`)
+          } else {
+            log(`[lx-dsh-peek] archive: ${stats.lastError}`)
+          }
         }
         void flush()
       }
@@ -993,7 +1037,11 @@ export function createArchiver({ ctx, config, zcode, log = (line) => console.err
       return {
         enabled,
         mode,
-        zcode: { enabled: zcodeEnabled },
+        zcode: {
+          enabled: zcodeEnabled,
+          sessions: stats.zcodeSessions,
+          messages: stats.zcodeMessages,
+        },
         controllerMethods: methods,
         apiBase,
         state: stats.state,

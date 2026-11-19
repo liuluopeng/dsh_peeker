@@ -232,10 +232,12 @@ covers both harnesses.
 Batches are byte-bounded (~1.5 MB) and a `413` response halves the batch and
 retries, so a single oversized tool result cannot wedge the queue; per-request
 session rows are narrowed to the sessions that batch actually references.
-A first full backfill of this machine's history measured 130 sessions /
-150 364 events / 45 event kinds / 385 MB with zero failures — two pre-v1
-format-v0 sessions are refused by the session-format migration itself and are
-reported rather than retried.
+Measured on this machine after the text-only slim-down: **231 sessions
+(133 DSH + 98 ZCode) / 40 978 rows / 86 MB**, searchable with `ILIKE`
+(pg_trgm was dropped — 109 MB of index for a substring search a sequential
+scan answers in milliseconds). Two pre-v1 format-v0 DSH sessions are refused by
+the session-format migration itself; they are marked unreadable and skipped
+instead of retried on every poll.
 
 Delivery is at-least-once: a failed POST is written to
 `~/.dsh/lx-dsh-peek-archive/spool/*.json` and retried until the NAS accepts it,
