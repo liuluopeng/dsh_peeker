@@ -21,6 +21,7 @@ A deliberately small, read-only, **light** LAN view of the active DSH sessions �
   - more than 4 active tasks keeps the first 4 and shows `显示前 4 个`.
 - A live `turn/end` destroys that task's pane immediately and flashes the whole background black/white at one-second intervals for three black phases (six phases total), then hides. It vibrates when the browser allows it. There is no persistent `任务结束` banner.
 - The same host plugin can enlarge the official DSH UI's fonts, widen its conversation column, and raise its composer height from `cordis.patch.yml`, without a patched DMG.
+- Its client face adds the **missing desktop shortcut for switching conversations**: `⌘⇧]` next session, `⌘⇧[` previous, as rebindable application commands rather than a private key listener.
 
 ## Install
 
@@ -41,7 +42,7 @@ A clean profile only needs the second command. For a reproducible install, appen
 dsh plugin --profile desktop add github:liuluopeng/dsh_peeker#<commit-sha>
 ```
 
-Reopen `DeepSeek Harness.app` after the command finishes. The plugin has no build step, so pnpm does not need `allowBuilds` approval.
+Reopen `DeepSeek Harness.app` after the command finishes. The plugin has no build step — neither the host face nor the client face — so pnpm does not need `allowBuilds` approval.
 
 To update a GitHub install, fully quit the app, rerun the same `add` command (it re-resolves the repository's `main`), then reopen the app.
 
@@ -89,7 +90,7 @@ By default `contentWidth: fill` makes the conversation content use the whole cen
 
 The conversation still cannot exceed the center pane. On desktop the left sidebar occupies 264–420px and an open right sidebar starts at 300px, so collapse the right sidebar with `⌘⌥B` and the left sidebar with `⌘B` (macOS desktop), or drag them narrower, to give the text more room.
 
-Install this bundle in the `desktop` profile, launch the official `DeepSeek Harness.app`, and the overrides apply. No patched DMG, no client bundle, and the official app's auto-update does not remove anything under `~/.dsh`.
+Install this bundle in the `desktop` profile, launch the official `DeepSeek Harness.app`, and the overrides apply. No patched DMG — the overrides are injected by the host plugin — and the official app's auto-update does not remove anything under `~/.dsh`.
 
 Set the actual sizes and width in `cordis.patch.yml`:
 
@@ -129,6 +130,21 @@ For a package installed from GitHub, do not edit files under `node_modules`. Put
     # px min-height of the official input box; 0 keeps the official height.
     composerHeight: 200
 ```
+
+## Desktop session switching (⌘⇧] / ⌘⇧[)
+
+The official 0.2.2 UI has **no previous/next-session shortcut** — ⌘K searches sessions, ⌘N starts one, and the sidebar is mouse-only. The plugin's client face adds the pair the sidebar lacks:
+
+| key (macOS desktop) | action |
+| --- | --- |
+| `⌘⇧]` | next session |
+| `⌘⇧[` | previous session |
+
+Both are ordinary application commands, not a private key listener: they appear in Settings → General → *Edit shortcuts* and in the `⌘/` reference, can be rebound or cleared per device, and on macOS/Windows the desktop's native keyboard bridge intercepts them before the page, so they work while the composer, a terminal, or an embedded page holds focus (a dialog other than the sidebar blocks them instead; see below). They are declared for `desktop:macos`, `desktop:windows` and `desktop:linux` only — a plain browser page gets no commands at all, because a browser reserves ⌘⇧[ and ⌘⇧] for its own tab switching.
+
+What "next" means: the Host list order the sidebar shows in its default *Last updated* mode (`sessions.list.ids`), filtered the way the Workspace browser filters its flat list — archived rows, subagent children, and every blank row except the selected one are skipped. The walk wraps from the last session to the first and from the first to the last. While a dialog other than the sidebar is open the keys are blocked instead of navigating out from under it. A manual *order by position* in the sidebar is a client-only view setting this plugin cannot read, so those users get recency order.
+
+Implementation: one `src/client.js` bundle, still no build step. `package.json` declares it with `dsh.client` and `exports["./client"]`, so the app's client-module table serves it at runtime and mounts it in the same Cordis tree as the host row; `src/index.js` is untouched apart from version metadata. `ctx.shortcuts.register` owns the bindings and `ctx.uiWorkspace.openSession()` performs the navigation — the same call a sidebar row makes.
 
 ## ZCode sessions
 
@@ -270,7 +286,7 @@ curl -H "Authorization: Bearer $JWT" "$NAS/api/dsh/archive/sessions/<id>/events?
 No runtime dependencies; the plugin uses only Node built-ins (`node:sqlite` needs Node ≥ 22.5 for the ZCode source; without it the rest still works).
 
 ```sh
-node --test tests/server.test.mjs tests/zcode.test.mjs tests/archive.test.mjs tests/archive.integration.test.mjs
+node --test tests/server.test.mjs tests/zcode.test.mjs tests/archive.test.mjs tests/archive.integration.test.mjs tests/client.test.mjs
 ```
 
 The first test boots the plugin with a mock `sessionController` and `jobController`, checks the page (including its no-input, hidden-scrollbar, tail-only markers), session listing, the SSE snapshot/delta/job-output/flash stream, multiplexing two sessions over one tagged stream, the read-only response, the injected official-UI font and conversation-width styles, and invalid-width rejection. The second builds a temporary SQLite store with ZCode's schema, seeds a running task (in-flight assistant message, streaming text part, running tool part) and a finished one, and asserts the merged session list, the bootstrap event mapping, and the watcher's live deltas plus its completion flash. The page uses CSS `@media (orientation: landscape)` for layout and `matchMedia` for the footer's `竖屏`/`横屏` label.
@@ -278,12 +294,14 @@ The first test boots the plugin with a mock `sessionController` and `jobControll
 ### Layout
 
 - `src/index.js` — Host plugin, HTTP/SSE listener, session listing and snapshot budget, optional `jobController` forwarding, multiplexed per-session frames, official-UI font/width style injection, ZCode source wiring.
+- `src/client.js` — client face served at runtime by `dsh.client`: registers the desktop `⌘⇧]` / `⌘⇧[` session commands through `ctx.shortcuts` and navigates with `ctx.uiWorkspace.openSession()`. No build step.
 - `src/zcode.js` — read-only ZCode adapter over `~/.zcode/cli/db/db.sqlite`: running detection, snapshot mapping, store-polling watcher.
 - `src/archive.js` — always-on session archive: live `session/event` capture, full-log backfill through `sessionQuery.observeSession` (fallback `follow`/`page`), byte-bounded batches with `413` splitting, spool on outage, JWT auto-refresh.
 - `src/page.html` — light mobile page, active-task panes, one shared SSE connection, orientation layout, flash, recently-finished strip.
 - `cordis.patch.yml` — bundle layer that inserts the `lx-dsh-peek` row.
 - `tests/server.test.mjs`, `tests/zcode.test.mjs` — keyless mock tests.
 - `tests/archive.test.mjs`, `tests/archive.integration.test.mjs` — archive pure helpers, plus a fake Host context and fake NAS proving full-log backfill, no promotion, live capture, spool-and-recover, and token refresh.
+- `tests/client.test.mjs` — runs the client bundle in a VM whose global object stands in for the page: the manifest declaration, the two Desktop-only bindings, browser-page silence, list-order walking with wrap-around, the archived/subagent/blank filter, dialog blocking, and the no-target case.
 
 ## License
 

@@ -1,11 +1,12 @@
 {
   "name": "lx_dsh_peek",
-  "version": "0.11.0",
-  "description": "Read-only, no-input, light-themed LAN peek at active DSH and ZCode sessions, plus host-injected font, taller-composer overrides for the official DSH UI (no patched DMG), and an always-on session archive that mirrors the conversation text of every DSH and ZCode session (your questions, assistant prose and reasoning) into the NAS PostgreSQL through /api/dsh/archive — full-log paging, JSONL spool on outage, JWT auto-refresh. HTTP bootstrap for the initial transcript and one multiplexed SSE for live deltas/events, live reasoning and tool calls, reconnect baseline hydration, bounded tail rendering with optional single-text-buffer terminal mode, background-command output, subagent-aware follow, completion flash, screen-wake fallback, 1/2/3/4 panes and orientation-aware layout.",
+  "version": "0.12.0",
+  "description": "Read-only, no-input, light-themed LAN peek at active DSH and ZCode sessions, plus host-injected font, taller-composer overrides for the official DSH UI (no patched DMG), and an always-on session archive that mirrors the conversation text of every DSH and ZCode session (your questions, assistant prose and reasoning) into the NAS PostgreSQL through /api/dsh/archive — full-log paging, JSONL spool on outage, JWT auto-refresh. HTTP bootstrap for the initial transcript and one multiplexed SSE for live deltas/events, live reasoning and tool calls, reconnect baseline hydration, bounded tail rendering with optional single-text-buffer terminal mode, background-command output, subagent-aware follow, completion flash, screen-wake fallback, 1/2/3/4 panes and orientation-aware layout, and a client face that adds ⌘⇧] / ⌘⇧[ next/previous session switching to the official desktop UI.",
   "type": "module",
   "main": "src/index.js",
   "exports": {
     ".": "./src/index.js",
+    "./client": "./src/client.js",
     "./package.json": "./package.json"
   },
   "files": [
@@ -25,6 +26,7 @@
     "peek",
     "postgres",
     "read-only",
+    "shortcut",
     "remote",
     "session-history",
     "transcript",
@@ -37,12 +39,15 @@
     "dsh": ">=0.2.0-rc.1 <0.3.0"
   },
   "scripts": {
-    "check": "node --check src/index.js && node --check src/zcode.js && node --check src/archive.js",
-    "test": "node --test tests/server.test.mjs tests/zcode.test.mjs tests/archive.test.mjs tests/archive.integration.test.mjs"
+    "check": "node --check src/index.js && node --check src/zcode.js && node --check src/archive.js && node --check src/client.js",
+    "test": "node --test tests/server.test.mjs tests/zcode.test.mjs tests/archive.test.mjs tests/archive.integration.test.mjs tests/client.test.mjs"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
     }
   }
 }
