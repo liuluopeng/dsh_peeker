@@ -209,7 +209,7 @@ function lanAddresses() {
 /**
  * Mount the listener.
  * @param {import('@deepseek-ai/cordis').Context} ctx
- * @param {{ port?: number, fontSize?: number, codeFontSize?: number, terminalFontSize?: number, contentWidth?: number | 'fill', composerHeight?: number } | undefined} config
+ * @param {{ port?: number, fontSize?: number, codeFontSize?: number, terminalFontSize?: number, contentWidth?: number | 'fill', composerHeight?: number, expandReasoning?: 'off' | 'stream' | 'all' } | undefined} config
  */
 export function apply(ctx, config) {
   const port = Number(config?.port ?? 3082)
@@ -232,6 +232,13 @@ export function apply(ctx, config) {
   const composerHeight = Number(config?.composerHeight ?? 200)
   if (!Number.isInteger(composerHeight) || (composerHeight !== 0 && (composerHeight < 80 || composerHeight > 600))) {
     throw new Error(`lx_dsh_peek: composerHeight must be 0 (official height) or an integer from 80 to 600, got ${JSON.stringify(config?.composerHeight)}`)
+  }
+  // Official-UI reasoning rows: 'all' opens every collapsed Think row, 'stream'
+  // opens only the row that is producing tokens, 'off' keeps the official
+  // behavior. The choice reaches the page as one injected `global` row.
+  const expandReasoning = config?.expandReasoning ?? 'all'
+  if (expandReasoning !== 'off' && expandReasoning !== 'stream' && expandReasoning !== 'all') {
+    throw new Error(`lx_dsh_peek: expandReasoning must be 'off', 'stream', or 'all', got ${JSON.stringify(config?.expandReasoning)}`)
   }
   if (config?.zcode !== undefined && typeof config.zcode !== 'boolean') {
     throw new Error(`lx_dsh_peek: zcode must be a boolean, got ${JSON.stringify(config.zcode)}`)
@@ -303,6 +310,9 @@ export function apply(ctx, config) {
   ctx.effect(() => {
     const off = ctx.on('webserver/index-inject', (table) => {
       table.push({ kind: 'style', text: injectedStyle })
+      // Read by the client face (src/client.js) through `globalThis`; the row
+      // renders as one `globalThis[...] = {...}` script before the boot scripts.
+      table.push({ kind: 'global', name: '__lxDshPeekUi', value: { expandReasoning } })
     })
     return () => { if (typeof off === 'function') off() }
   }, 'lx-dsh-peek:official-ui-overrides')

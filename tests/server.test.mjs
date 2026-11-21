@@ -239,23 +239,33 @@ test('injects the official UI font, taller composer, and conversation-width over
   for (const entry of listeners) {
     if (entry.event === 'webserver/index-inject') entry.listener(table)
   }
-  assert.equal(table.length, 1)
-  assert.equal(table[0].kind, 'style')
-  assert.match(table[0].text, /--dsh-content-font-size: 34px !important/)
-  assert.match(table[0].text, /--dsh-code-font-size: 24px !important/)
-  assert.match(table[0].text, /--dsh-terminal-font-size: 24px !important/)
-  assert.match(table[0].text, /--dsh-chat-user-width: 10000px/)
-  assert.match(table[0].text, /\[data-conversation-content\] \{\s*--dsh-chat-content-width: 10000px !important/)
-  assert.match(table[0].text, /--dsh-composer-card-max-width: 10032px !important/)
-  assert.match(table[0].text, /\[data-width-handle\] \{\s*display: none !important/)
-  assert.match(table[0].text, /\[data-composer-input="true"\] \{\s*min-height: 200px !important/)
-  assert.match(table[0].text, /--dsh-composer-text-max-height: 360px !important/)
+  assert.equal(table.length, 2)
+  const style = table.find((row) => row.kind === 'style')
+  assert.ok(style, 'the stylesheet row is injected')
+  const settings = table.find((row) => row.kind === 'global')
+  assert.ok(settings, 'the client settings row is injected')
+  assert.equal(settings.name, '__lxDshPeekUi')
+  assert.deepEqual(settings.value, { expandReasoning: 'all' })
+  assert.match(style.text, /--dsh-content-font-size: 34px !important/)
+  assert.match(style.text, /--dsh-code-font-size: 24px !important/)
+  assert.match(style.text, /--dsh-terminal-font-size: 24px !important/)
+  assert.match(style.text, /--dsh-chat-user-width: 10000px/)
+  assert.match(style.text, /\[data-conversation-content\] \{\s*--dsh-chat-content-width: 10000px !important/)
+  assert.match(style.text, /--dsh-composer-card-max-width: 10032px !important/)
+  assert.match(style.text, /\[data-width-handle\] \{\s*display: none !important/)
+  assert.match(style.text, /\[data-composer-input="true"\] \{\s*min-height: 200px !important/)
+  assert.match(style.text, /--dsh-composer-text-max-height: 360px !important/)
 })
 
 test('rejects an invalid composer height', () => {
   assert.throws(() => apply({}, { port, composerHeight: 40 }), /composerHeight/)
   assert.throws(() => apply({}, { port, composerHeight: 601 }), /composerHeight/)
   assert.throws(() => apply({}, { port, composerHeight: 1.5 }), /composerHeight/)
+})
+
+test('rejects an invalid reasoning expansion mode', () => {
+  assert.throws(() => apply({}, { port, expandReasoning: 'sometimes' }), /expandReasoning/)
+  assert.throws(() => apply({}, { port, expandReasoning: true }), /expandReasoning/)
 })
 
 test('rejects an invalid conversation width', () => {

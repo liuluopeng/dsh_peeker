@@ -21,7 +21,8 @@ A deliberately small, read-only, **light** LAN view of the active DSH sessions �
   - more than 4 active tasks keeps the first 4 and shows `显示前 4 个`.
 - A live `turn/end` destroys that task's pane immediately and flashes the whole background black/white at one-second intervals for three black phases (six phases total), then hides. It vibrates when the browser allows it. There is no persistent `任务结束` banner.
 - The same host plugin can enlarge the official DSH UI's fonts, widen its conversation column, and raise its composer height from `cordis.patch.yml`, without a patched DMG.
-- Its client face adds the **missing desktop shortcut for switching conversations**: `⌘⇧]` next session, `⌘⇧[` previous, as rebindable application commands rather than a private key listener.
+- Its client face adds the **missing desktop shortcut for switching conversations**: `⌘⇧]` next session, `⌘⇧[` previous, as rebindable application commands rather than a private key listener, walking the exact order the sidebar shows.
+- It also **opens Think rows by default** (the official UI has no such setting and keeps the collapsed body unmounted), with `expandReasoning: all | stream | off`.
 
 ## Install
 
@@ -142,9 +143,25 @@ The official 0.2.2 UI has **no previous/next-session shortcut** — ⌘K searche
 
 Both are ordinary application commands, not a private key listener: they appear in Settings → General → *Edit shortcuts* and in the `⌘/` reference, can be rebound or cleared per device, and on macOS/Windows the desktop's native keyboard bridge intercepts them before the page, so they work while the composer, a terminal, or an embedded page holds focus (a dialog other than the sidebar blocks them instead; see below). They are declared for `desktop:macos`, `desktop:windows` and `desktop:linux` only — a plain browser page gets no commands at all, because a browser reserves ⌘⇧[ and ⌘⇧] for its own tab switching.
 
-What "next" means: the Host list order the sidebar shows in its default *Last updated* mode (`sessions.list.ids`), filtered the way the Workspace browser filters its flat list — archived rows, subagent children, and every blank row except the selected one are skipped. The walk wraps from the last session to the first and from the first to the last. While a dialog other than the sidebar is open the keys are blocked instead of navigating out from under it. A manual *order by position* in the sidebar is a client-only view setting this plugin cannot read, so those users get recency order.
+Nothing else has to be clicked: the composer restores its own focus whenever the main-view Session changes (`InputBar`'s automatic desktop focus effect is keyed on the Session), returning the caret to that Session's draft selection — so `⌘⇧]` then typing continues in the new conversation. A locked composer (a blocked or removed Session) stays unfocused, and touch devices suppress the automatic focus to avoid opening the software keyboard.
+
+What "next" means: **the order the sidebar actually shows**. The face reads the rendered Session rows (`data-row-key="session:…"`) top to bottom, so recency order, a manual drag order, pinned rows first, the archived filter, and collapsed workspace groups are all honoured — the same list you would click. When the current Session is hidden inside a collapsed group, the walk continues in Host order until it meets a visible row. With the sidebar hidden (`⌘B`) it falls back to `sessions.list.ids` (Host recency) filtered like the Workspace browser's flat list: archived rows, subagent children and every blank row except the selected one are skipped. The walk wraps at both ends, and while a dialog other than the sidebar is open the keys are blocked instead of navigating out from under it.
 
 Implementation: one `src/client.js` bundle, still no build step. `package.json` declares it with `dsh.client` and `exports["./client"]`, so the app's client-module table serves it at runtime and mounts it in the same Cordis tree as the host row; `src/index.js` is untouched apart from version metadata. `ctx.shortcuts.register` owns the bindings and `ctx.uiWorkspace.openSession()` performs the navigation — the same call a sidebar row makes.
+
+## Reasoning expanded by default
+
+The official 0.2.2 UI always starts a Think row collapsed, and it does not even mount the reasoning body until the row is opened (`{open && children}`) — there is no setting for it: `ui-chat` exposes only *transcript view*, *collapse timing*, *folded replies*, *performance usage* and *link opening*. `transcriptView: verbose` stops completed Turns from folding but leaves every Think block closed.
+
+The plugin's client face opens them for you. It walks the page with a `MutationObserver`, clicks the collapsed Think headers as they appear (including rows that stream in later), and remembers rows you collapsed yourself so it never reopens one behind your back. Three modes, from `cordis.patch.yml`:
+
+| `expandReasoning` | behaviour |
+| --- | --- |
+| `all` (default) | every collapsed reasoning row opens — the live one and the whole history |
+| `stream` | only the row that is currently producing tokens opens; settled history stays closed |
+| `off` | the official behaviour, no automatic opening |
+
+Opening is batched (20 rows per animation frame) and capped at 600 rows per page, so a pathological transcript cannot stall the UI; long sessions are cheaper on `stream`. This is a DOM-level adaptation — it clicks the same header a reader clicks (`[data-variant="think"] [data-disclosure-row]`) — so a future UI rewrite of that row disables it safely (set `off`). The clean long-term fix is an upstream preference threaded into `useDisclosure`; this plugin does the same thing without patching the app.
 
 ## ZCode sessions
 
@@ -196,7 +213,7 @@ The default card view creates one article per user/assistant message, tool call,
 
 ## Configuration
 
-Change the port, conversation width, or font sizes in `cordis.patch.yml`:
+Change the port, conversation width, font sizes, or reasoning expansion in `cordis.patch.yml`:
 
 ```yaml
 - insert:
@@ -211,6 +228,9 @@ Change the port, conversation width, or font sizes in `cordis.patch.yml`:
         # px min-height of the official input box; 0 keeps the official height.
         # The scroll area starts scrolling after composerHeight + 160px.
         composerHeight: 200
+        # Think rows: 'all' (default) opens every reasoning row, 'stream' only
+        # the one producing tokens, 'off' keeps the official collapsed rows.
+        expandReasoning: all
         archive:
           enabled: true
           apiBase: http://192.168.31.58:23000
@@ -294,7 +314,7 @@ The first test boots the plugin with a mock `sessionController` and `jobControll
 ### Layout
 
 - `src/index.js` — Host plugin, HTTP/SSE listener, session listing and snapshot budget, optional `jobController` forwarding, multiplexed per-session frames, official-UI font/width style injection, ZCode source wiring.
-- `src/client.js` — client face served at runtime by `dsh.client`: registers the desktop `⌘⇧]` / `⌘⇧[` session commands through `ctx.shortcuts` and navigates with `ctx.uiWorkspace.openSession()`. No build step.
+- `src/client.js` — client face served at runtime by `dsh.client`: registers the desktop `⌘⇧]` / `⌘⇧[` session commands through `ctx.shortcuts` (walking the sidebar's rendered row order), navigates with `ctx.uiWorkspace.openSession()`, and auto-opens collapsed Think rows (`expandReasoning`). No build step.
 - `src/zcode.js` — read-only ZCode adapter over `~/.zcode/cli/db/db.sqlite`: running detection, snapshot mapping, store-polling watcher.
 - `src/archive.js` — always-on session archive: live `session/event` capture, full-log backfill through `sessionQuery.observeSession` (fallback `follow`/`page`), byte-bounded batches with `413` splitting, spool on outage, JWT auto-refresh.
 - `src/page.html` — light mobile page, active-task panes, one shared SSE connection, orientation layout, flash, recently-finished strip.
