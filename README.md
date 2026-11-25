@@ -23,6 +23,9 @@ A deliberately small, read-only, **light** LAN view of the active DSH sessions �
 - The same host plugin can enlarge the official DSH UI's fonts, widen its conversation column, and raise its composer height from `cordis.patch.yml`, without a patched DMG.
 - Its client face adds the **missing desktop shortcut for switching conversations**: `⌘⇧]` next session, `⌘⇧[` previous, as rebindable application commands rather than a private key listener, walking the exact order the sidebar shows.
 - It also **opens Think rows by default** (the official UI has no such setting and keeps the collapsed body unmounted), with `expandReasoning: all | stream | off`.
+- **Every Session keeps a terminal.** Terminal tabs are Session-scoped, so a new Session starts without one; the client face opens one for the on-screen Session automatically (`autoTerminal: off | open | reveal`).
+- **Goal-driven sessions count as active** even between rounds, when DSH's round driver is waiting and the agent reports idle: the page reads the durable `goal` projection and keeps a pane with a `目标` badge and `目标等待下一轮 · 第 N/M 轮`.
+- `⌘⇧I` puts the caret back in the composer from anywhere (a Session-scoped terminal keeps focus after a switch), and every session switch already hands the caret to the new conversation.
 
 ## Install
 
@@ -143,7 +146,7 @@ The official 0.2.2 UI has **no previous/next-session shortcut** — ⌘K searche
 
 Both are ordinary application commands, not a private key listener: they appear in Settings → General → *Edit shortcuts* and in the `⌘/` reference, can be rebound or cleared per device, and on macOS/Windows the desktop's native keyboard bridge intercepts them before the page, so they work while the composer, a terminal, or an embedded page holds focus (a dialog other than the sidebar blocks them instead; see below). They are declared for `desktop:macos`, `desktop:windows` and `desktop:linux` only — a plain browser page gets no commands at all, because a browser reserves ⌘⇧[ and ⌘⇧] for its own tab switching.
 
-Nothing else has to be clicked: the composer restores its own focus whenever the main-view Session changes (`InputBar`'s automatic desktop focus effect is keyed on the Session), returning the caret to that Session's draft selection — so `⌘⇧]` then typing continues in the new conversation. A locked composer (a blocked or removed Session) stays unfocused, and touch devices suppress the automatic focus to avoid opening the software keyboard.
+**Getting back to the input box.** Terminal tabs are Session-scoped, so when a session with an open terminal becomes the main view the terminal pane mounts and focuses itself — after a switch the caret can sit in the shell instead of the composer. The face therefore hands the caret to the new conversation's composer after every switch, retrying briefly while the conversation mounts; when no terminal is involved the composer's own focus effect does the same. To move focus back at any other moment, `⌘⇧I` (*Focus input*, command `lxPeek.focusComposer`, rebindable) works from the terminal, the page, or an embedded frame. The official 0.2.2 UI has no such key, so clicking the composer is the only built-in way.
 
 What "next" means: **the order the sidebar actually shows**. The face reads the rendered Session rows (`data-row-key="session:…"`) top to bottom, so recency order, a manual drag order, pinned rows first, the archived filter, and collapsed workspace groups are all honoured — the same list you would click. When the current Session is hidden inside a collapsed group, the walk continues in Host order until it meets a visible row. With the sidebar hidden (`⌘B`) it falls back to `sessions.list.ids` (Host recency) filtered like the Workspace browser's flat list: archived rows, subagent children and every blank row except the selected one are skipped. The walk wraps at both ends, and while a dialog other than the sidebar is open the keys are blocked instead of navigating out from under it.
 
@@ -162,6 +165,31 @@ The plugin's client face opens them for you. It walks the page with a `MutationO
 | `off` | the official behaviour, no automatic opening |
 
 Opening is batched (20 rows per animation frame) and capped at 600 rows per page, so a pathological transcript cannot stall the UI; long sessions are cheaper on `stream`. This is a DOM-level adaptation — it clicks the same header a reader clicks (`[data-variant="think"] [data-disclosure-row]`) — so a future UI rewrite of that row disables it safely (set `off`). The clean long-term fix is an upstream preference threaded into `useDisclosure`; this plugin does the same thing without patching the app.
+
+## Terminal always open
+
+Terminal tabs in the right sidebar are registered per Session (`sidebar.right.pane.tab` receives the `sessionId`), so **every new Session starts without one** and the terminal rail's `+` is a per-Session click. The client face removes that step: whenever the on-screen Session changes — including to a brand-new Session — it checks the Session's tabs and opens a `terminal` tab when there is none. Opening the tab mounts its body, which launches the preferred shell automatically (the same path the `+` button takes).
+
+| `autoTerminal` | behaviour |
+| --- | --- |
+| `off` | official behaviour; nothing opens |
+| `open` (default) | open a terminal tab for the on-screen Session when it has none |
+| `reveal` | the same, and expand the right column when it is collapsed to its rail |
+
+Details: an opened terminal body focuses itself, so the switch hands the caret back to the composer (the same retrying handover the `⌘⇧]` commands use); the on-screen Session's right-sidebar store is adopted as its seat renders, so the first attempt is retried at 120 ms and 400 ms until the tab is placed; a Session that already has a terminal is left alone (no duplicates); and because it acts on Session changes only, a terminal you close by hand stays closed until you switch away and back. `reveal` goes through the column toggle, which focuses the active right pane — keep `open` if you want the composer caret to stay where the session switch put it.
+
+## Goal sessions stay visible
+
+A session running a durable **goal** (DSH's 进行中的目标 / 深度求索中) is driven by the goal round driver: each round is a normal turn, and between rounds the driver waits for quiescence. During those gaps the Session's agent reports `status: 'running' === false`, so the plain "is the agent running" check — the one the official session list exposes — says *not active*, even though DSH keeps planning the next round.
+
+The peek page therefore reads the durable `goal` projection every poll (`item.projections.values.goal`, phase `active | paused | blocked | complete`) and treats an **active** goal as an active task:
+
+- the Session gets a pane even while the agent is idle, sorted with the running ones;
+- a live `turn/end` no longer destroys that pane — it switches to `目标等待下一轮 · 第 N/M 轮` and waits for the next round instead of flashing and disappearing;
+- the pane header carries a `目标` badge (violet dot) and the header status counts waiting goals (`3 个活跃任务 · 1 个目标`);
+- once the goal is paused, blocked or complete the projection stops being active, and the pane leaves like any finished task.
+
+Nothing is inferred from text or timing: if the Host reports no goal projection (a profile without the goal plugin), behaviour is exactly as before.
 
 ## ZCode sessions
 
@@ -231,6 +259,10 @@ Change the port, conversation width, font sizes, or reasoning expansion in `cord
         # Think rows: 'all' (default) opens every reasoning row, 'stream' only
         # the one producing tokens, 'off' keeps the official collapsed rows.
         expandReasoning: all
+        # Terminal: 'open' (default) gives each on-screen Session a terminal tab
+        # when it has none, 'reveal' also expands the collapsed right column,
+        # 'off' leaves the official per-Session terminal behaviour alone.
+        autoTerminal: open
         archive:
           enabled: true
           apiBase: http://192.168.31.58:23000
@@ -313,8 +345,8 @@ The first test boots the plugin with a mock `sessionController` and `jobControll
 
 ### Layout
 
-- `src/index.js` — Host plugin, HTTP/SSE listener, session listing and snapshot budget, optional `jobController` forwarding, multiplexed per-session frames, official-UI font/width style injection, ZCode source wiring.
-- `src/client.js` — client face served at runtime by `dsh.client`: registers the desktop `⌘⇧]` / `⌘⇧[` session commands through `ctx.shortcuts` (walking the sidebar's rendered row order), navigates with `ctx.uiWorkspace.openSession()`, and auto-opens collapsed Think rows (`expandReasoning`). No build step.
+- `src/index.js` — Host plugin, HTTP/SSE listener, session listing (including the goal projection that keeps goal Sessions active) and snapshot budget, optional `jobController` forwarding, multiplexed per-session frames, official-UI font/width style injection, ZCode source wiring.
+- `src/client.js` — client face served at runtime by `dsh.client`: registers the desktop `⌘⇧]` / `⌘⇧[` session commands through `ctx.shortcuts` (walking the sidebar's rendered row order), navigates with `ctx.uiWorkspace.openSession()` and hands the caret to the new composer, focuses the input on `⌘⇧I` (`ctx.conversation.input.for(scope).focus()`), opens a terminal for each on-screen Session (`autoTerminal`), and auto-opens collapsed Think rows (`expandReasoning`). No build step.
 - `src/zcode.js` — read-only ZCode adapter over `~/.zcode/cli/db/db.sqlite`: running detection, snapshot mapping, store-polling watcher.
 - `src/archive.js` — always-on session archive: live `session/event` capture, full-log backfill through `sessionQuery.observeSession` (fallback `follow`/`page`), byte-bounded batches with `413` splitting, spool on outage, JWT auto-refresh.
 - `src/page.html` — light mobile page, active-task panes, one shared SSE connection, orientation layout, flash, recently-finished strip.

@@ -245,7 +245,7 @@ test('injects the official UI font, taller composer, and conversation-width over
   const settings = table.find((row) => row.kind === 'global')
   assert.ok(settings, 'the client settings row is injected')
   assert.equal(settings.name, '__lxDshPeekUi')
-  assert.deepEqual(settings.value, { expandReasoning: 'all' })
+  assert.deepEqual(settings.value, { expandReasoning: 'all', autoTerminal: 'open' })
   assert.match(style.text, /--dsh-content-font-size: 34px !important/)
   assert.match(style.text, /--dsh-code-font-size: 24px !important/)
   assert.match(style.text, /--dsh-terminal-font-size: 24px !important/)
@@ -261,6 +261,11 @@ test('rejects an invalid composer height', () => {
   assert.throws(() => apply({}, { port, composerHeight: 40 }), /composerHeight/)
   assert.throws(() => apply({}, { port, composerHeight: 601 }), /composerHeight/)
   assert.throws(() => apply({}, { port, composerHeight: 1.5 }), /composerHeight/)
+})
+
+test('rejects an invalid auto-terminal mode', () => {
+  assert.throws(() => apply({}, { port, autoTerminal: 'always' }), /autoTerminal/)
+  assert.throws(() => apply({}, { port, autoTerminal: 1 }), /autoTerminal/)
 })
 
 test('rejects an invalid reasoning expansion mode', () => {
@@ -322,6 +327,48 @@ test('lists sessions and refuses writes', async () => {
   const write = await fetch(`${base}/api/sessions`, { method: 'POST' })
   assert.equal(write.status, 405)
   assert.deepEqual(await write.json(), { error: 'read-only' })
+})
+
+test('reports a goal Session as active while its agent idles between rounds', async () => {
+  const now = Date.now()
+  const goalSession = {
+    sessionId: 'session-goal',
+    cwd: '/tmp/demo',
+    updatedAt: now - 500,
+    // The round driver waits between rounds, so the agent itself is idle here.
+    running: false,
+    projections: {
+      values: {
+        'session/title': 'Goal task',
+        goal: {
+          goal: {
+            id: 'goal-1', revision: 1, objective: '逐步把 macOS ObjC 层迁移到 Swift',
+            phase: 'active', maxGoalRounds: 40,
+          },
+          roundsStarted: 3,
+          createdAt: now - 3_600_000,
+          updatedAt: now - 500,
+        },
+      },
+    },
+  }
+  sessions.push(goalSession)
+  try {
+    const body = await (await fetch(`${base}/api/sessions`)).json()
+    const goal = body.items.find((item) => item.sessionId === 'session-goal')
+    assert.ok(goal, 'the goal Session is listed')
+    assert.equal(goal.running, false, 'the agent is idle between rounds')
+    assert.equal(goal.goalActive, true, 'the durable goal keeps the task active')
+    assert.equal(goal.goal.phase, 'active')
+    assert.equal(goal.goal.roundsStarted, 3)
+    assert.equal(goal.goal.maxGoalRounds, 40)
+    assert.match(goal.goal.objective, /Swift/)
+    const plain = body.items.find((item) => item.sessionId === 'session-bulk')
+    assert.equal(plain.goalActive, false, 'a Session without a goal is not goal-active')
+    assert.equal(plain.goal, undefined)
+  } finally {
+    sessions.splice(sessions.indexOf(goalSession), 1)
+  }
 })
 
 test('serves the initial transcript over plain HTTP bootstrap', async () => {

@@ -24,19 +24,20 @@ window.__ModuleLoader__.load({
     const exports = module.exports
 
     /** Client services this face reads before it may activate. */
-    exports.inject = ['shortcuts', 'sessions', 'workspaces', 'uiWorkspace', 'locale']
+    exports.inject = ['shortcuts', 'sessions', 'workspaces', 'uiWorkspace', 'conversation', 'sidebarRight', 'locale']
 
     /** Locale namespace owned by this face. */
     const NS = 'lx-dsh-peek'
 
     const DICTIONARIES = {
-      en: { next: 'Next session', previous: 'Previous session' },
-      zh: { next: '下一个会话', previous: '上一个会话' },
+      en: { next: 'Next session', previous: 'Previous session', focus: 'Focus input' },
+      zh: { next: '下一个会话', previous: '上一个会话', focus: '聚焦输入框' },
     }
 
     const ALIASES = {
       next: ['next session', 'next conversation', 'switch to next session', '下一个会话', '切换下一个会话'],
       previous: ['previous session', 'previous conversation', 'switch to previous session', '上一个会话', '切换上一个会话'],
+      focus: ['focus input', 'focus composer', 'composer', '聚焦输入框', '回到输入框'],
     }
 
     /** Sidebar row attribute carrying the Session id; one row per visible Session. */
@@ -149,6 +150,115 @@ window.__ModuleLoader__.load({
         }
       }
       return stepList(hostIds, current, step)
+    }
+
+    /** The composer card; a focused descendant means the caret is in the input. */
+    const COMPOSER = '[data-composer-card], [data-composer-input]'
+    /** Delays after a switch: the Session-scoped terminal pane focuses on mount. */
+    const FOCUS_RETRY_DELAYS = [80, 250, 600, 1200]
+
+    /**
+     * Put the caret back in one Session's composer.
+     * @param ctx - client context.
+     * @param sessionId - Session whose composer is the target.
+     * @returns whether the composer holds focus afterwards.
+     */
+    function focusComposer(ctx, sessionId) {
+      const doc = globalThis.document
+      if (doc === undefined || doc === null) return false
+      try {
+        const scope = ctx.sessions.scope(sessionId)
+        if (scope === undefined) return false
+        ctx.conversation.input.for(scope).focus()
+      } catch {
+        // The Session may not be retained yet, or its composer may not be mounted.
+        return false
+      }
+      const active = doc.activeElement
+      return active !== null && active !== undefined && typeof active.closest === 'function'
+        && active.closest(COMPOSER) !== null
+    }
+
+    /**
+     * Focus the composer now, retrying briefly. A Session-scoped terminal pane
+     * focuses itself when it mounts, which happens after the composer mounted
+     * while switching Sessions, so one attempt is not always enough.
+     * @param ctx - client context.
+     * @param sessionId - Session whose composer is the target.
+     */
+    function scheduleComposerFocus(ctx, sessionId) {
+      const later = globalThis.setTimeout
+      const delays = FOCUS_RETRY_DELAYS.slice()
+      const attempt = () => {
+        if (focusComposer(ctx, sessionId)) return
+        const delay = delays.shift()
+        if (delay !== undefined && typeof later === 'function') later(attempt, delay)
+      }
+      attempt()
+    }
+
+    /** Retry delays for the on-screen Session's sidebar store to be adopted. */
+    const TERMINAL_RETRY_DELAYS = [120, 400]
+
+    /**
+     * Give the on-screen Session a terminal tab when it has none.
+     *
+     * Terminal tabs are Session-scoped, so every new Session starts without one.
+     * The right-sidebar store of the on-screen Session is adopted as its seat
+     * renders, which happens just after `mounted` changes — hence the short
+     * retries. 'reveal' also expands a collapsed column.
+     * @param ctx - client context.
+     * @param mode - 'open' or 'reveal'; anything else is inert.
+     * @returns a disposer that stops following the on-screen Session.
+     */
+    function installAutoTerminal(ctx, mode) {
+      if (mode !== 'open' && mode !== 'reveal') return () => {}
+      const sidebar = ctx.sidebarRight
+      if (sidebar === undefined || sidebar === null || typeof sidebar.tabsIn !== 'function') return () => {}
+      let disposed = false
+
+      const hasTerminal = (sessionId) => {
+        const tabs = sidebar.tabsIn(sessionId)
+        return Array.isArray(tabs) && tabs.some((tab) => tab !== null && tab !== undefined && tab.kind === 'terminal')
+      }
+
+      const ensure = (sessionId, attempt) => {
+        if (disposed || sessionId === undefined) return
+        if (sidebar.mounted.getSnapshot() !== sessionId) return
+        try {
+          if (hasTerminal(sessionId)) {
+            // The tab exists; 'reveal' also brings a collapsed column back.
+            if (mode === 'reveal' && typeof sidebar.isExpanded === 'function' && sidebar.isExpanded() === false) {
+              sidebar.toggleExpanded()
+            }
+            return
+          }
+          if (typeof sidebar.openTabIn !== 'function') return
+          sidebar.openTabIn(sessionId, 'terminal')
+        } catch (error) {
+          console.warn('[lx_dsh_peek] auto terminal failed:', error)
+          return
+        }
+        const later = globalThis.setTimeout
+        const delay = TERMINAL_RETRY_DELAYS[attempt]
+        // The seat may not have adopted this Session's store yet; retry once it has.
+        if (delay !== undefined && typeof later === 'function') later(() => ensure(sessionId, attempt + 1), delay)
+      }
+
+      const follow = () => {
+        const sessionId = sidebar.mounted.getSnapshot()
+        if (sessionId === undefined) return
+        ensure(sessionId, 0)
+        // An opened (or arriving) terminal focuses itself; the reader types in
+        // the composer, so hand the caret back once per on-screen change.
+        scheduleComposerFocus(ctx, sessionId)
+      }
+      const unsubscribe = sidebar.mounted.subscribe(follow)
+      follow()
+      return () => {
+        disposed = true
+        unsubscribe()
+      }
     }
 
     /**
@@ -300,7 +410,45 @@ window.__ModuleLoader__.load({
           }
           const target = targetSessionId(ctx, step)
           if (target === undefined) return { status: 'blocked', reason: 'no-session' }
-          return { status: 'handled', run: () => { ctx.uiWorkspace.openSession(target) } }
+          return { status: 'handled', run: () => {
+            ctx.uiWorkspace.openSession(target)
+            // A Session-scoped terminal pane focuses itself when it mounts, so
+            // the new conversation's composer needs the caret handed back.
+            scheduleComposerFocus(ctx, target)
+          } }
+        },
+      })
+    }
+
+    /**
+     * Register the Desktop command that hands the caret back to the composer —
+     * the sidebar terminal keeps focus after a switch, and nothing in the
+     * official 0.2.2 UI brings it back with the keyboard.
+     * @param ctx - client context.
+     * @param t - locale-bound translate function.
+     * @returns the registration disposer.
+     */
+    function focusCommand(ctx, t) {
+      return ctx.shortcuts.register({
+        id: 'lxPeek.focusComposer',
+        label: () => t('focus'),
+        aliases: ALIASES.focus,
+        defaults: {
+          'desktop:macos': { code: 'KeyI', modifiers: ['primary', 'shift'] },
+          'desktop:windows': { code: 'KeyI', modifiers: ['primary', 'shift'] },
+          'desktop:linux': { code: 'KeyI', modifiers: ['primary', 'shift'] },
+        },
+        // 'terminal' lets the same key work from the sidebar terminal once a
+        // browser binding is configured; Desktop bindings ignore regions.
+        regions: ['page', 'editable', 'terminal'],
+        modals: ['sidebar'],
+        resolve: (context) => {
+          if (context.modal !== null && context.modal !== 'sidebar') {
+            return { status: 'blocked', reason: 'close-dialog' }
+          }
+          const target = mainSessionId(ctx)
+          if (target === undefined) return { status: 'blocked', reason: 'no-session' }
+          return { status: 'handled', run: () => { scheduleComposerFocus(ctx, target) } }
         },
       })
     }
@@ -313,7 +461,9 @@ window.__ModuleLoader__.load({
     exports.apply = (ctx) => {
       const settings = globalThis.__lxDshPeekUi ?? {}
       const expandReasoning = settings.expandReasoning ?? 'off'
+      const autoTerminal = settings.autoTerminal ?? 'off'
       ctx.effect(() => installReasoningAutoExpand(expandReasoning), 'lx_dsh_peek: reasoning expansion')
+      ctx.effect(() => installAutoTerminal(ctx, autoTerminal), 'lx_dsh_peek: auto terminal')
 
       // The Electron shell is the only target for the keys: the client table
       // also loads this bundle in a plain browser page, where ⌘⇧[ / ⌘⇧] belong
@@ -323,6 +473,7 @@ window.__ModuleLoader__.load({
       ctx.effect(() => ctx.locale.register(NS, DICTIONARIES), 'lx_dsh_peek: shortcut labels')
       ctx.effect(() => register(ctx, t, 'lxPeek.sessionNext', 'next', 'BracketRight', 1), 'lx_dsh_peek: next session')
       ctx.effect(() => register(ctx, t, 'lxPeek.sessionPrevious', 'previous', 'BracketLeft', -1), 'lx_dsh_peek: previous session')
+      ctx.effect(() => focusCommand(ctx, t), 'lx_dsh_peek: focus input')
     }
 
     return module.exports

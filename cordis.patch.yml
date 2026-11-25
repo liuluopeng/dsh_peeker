@@ -21,6 +21,10 @@
         # reasoning row (history too), 'stream' opens only the row producing
         # tokens, 'off' keeps the official behavior.
         expandReasoning: all
+        # Terminal tabs are Session-scoped, so a new Session has none. 'open'
+        # gives the on-screen Session a terminal tab when it has none, 'reveal'
+        # also expands the collapsed right column, 'off' leaves the UI alone.
+        autoTerminal: open
         # ── 会话归档（2026-11-19）：把每个会话的完整事件流镜像到 NAS 的 PG ──
         # 默认开启；没有凭证时只留在内存、在 /api/archive/status 标记 no-token。
         archive:

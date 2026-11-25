@@ -46,6 +46,11 @@
   .brand span { color: var(--accent); }
   .dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }
   .dot.busy { background: var(--ok); box-shadow: 0 0 0 3px rgba(22, 138, 79, .14); animation: pulse 1.2s infinite; }
+  /* A durable goal keeps its Session on screen between rounds. */
+  .dot.goal { background: #7c3aed; box-shadow: 0 0 0 3px rgba(124, 58, 237, .14); }
+  .goal-badge { flex: 0 0 auto; padding: 0 5px; border-radius: 999px; background: #f3f0ff; color: #6d28d9; font-size: 10px; line-height: 15px; font-weight: 600; }
+  .goal-badge[hidden] { display: none; }
+  .pane[data-goal="true"] .pane-head { background: #faf8ff; }
   @keyframes pulse { 50% { opacity: .45; } }
   .status { min-width: 0; overflow: hidden; color: var(--muted); font-size: 13px; white-space: nowrap; text-overflow: ellipsis; }
   /* Recently finished ZCode tasks: the completion answer that survives a
@@ -205,6 +210,9 @@
   // Sessions whose pane was destroyed by a turn/end. Keep them out of the next
   // poll's re-creation check until the host stops reporting them as running.
   const dismissed = new Set()
+  // Latest list snapshot per Session; a turn/end asks it whether the task is a
+  // goal that continues (its rounds resume after this turn).
+  const lastSessions = new Map()
   let syncing = false
   let refreshing = false
   let streamSource = null
@@ -318,10 +326,21 @@
     for (const pane of panes.values()) scrollPane(pane)
   }
 
+  /** "第 3/40 轮" when the goal projection is available. */
+  function goalRounds(pane) {
+    const goal = pane.goal
+    if (goal === undefined || goal === null) return ''
+    const done = Number(goal.roundsStarted) || 0
+    const limit = Number(goal.maxGoalRounds) || 0
+    return ` · 第 ${done}${limit > 0 ? `/${limit}` : ''} 轮`
+  }
+
   function paintPane(pane) {
     pane.titleEl.textContent = pane.title || pane.id
-    pane.dotEl.className = `dot${pane.running ? ' busy' : ''}`
+    pane.dotEl.className = `dot${pane.running ? ' busy' : !pane.goalActive ? '' : ' goal'}`
     pane.root.dataset.running = pane.running ? 'true' : 'false'
+    pane.root.dataset.goal = pane.goalActive ? 'true' : 'false'
+    if (pane.goalBadgeEl !== undefined) pane.goalBadgeEl.hidden = !pane.goalActive
     if (pane.running) {
       if (!pane.startedAt) pane.startedAt = Date.now()
       pane.statusEl.textContent = pane.streamState === 'open'
@@ -329,6 +348,12 @@
         : pane.streamState === 'error' ? '重连中…' : '连接中…'
       pane.elapsedEl.hidden = false
       pane.elapsedEl.dataset.since = String(pane.startedAt)
+    } else if (pane.goalActive) {
+      // The goal is still active: this turn ended, the next round is coming.
+      pane.statusEl.textContent = `${pane.goalWaiting ? '目标等待下一轮' : '目标进行中'}${goalRounds(pane)}`
+      pane.elapsedEl.hidden = true
+      delete pane.elapsedEl.dataset.since
+      pane.elapsedEl.textContent = ''
     } else {
       pane.statusEl.textContent = pane.streamState === 'ended' ? '流已结束' : '空闲'
       pane.elapsedEl.hidden = true
@@ -693,13 +718,20 @@
         }
         break
       }
-      case 'turn/start':
+      case 'turn/start': {
         pane.drafts.clear()
         pane.running = true
         pane.startedAt = Number(event.time) || Date.now()
+        pane.goalWaiting = false
+        const latest = lastSessions.get(pane.id)
+        if (latest !== undefined && latest.goalActive === true) {
+          pane.goal = latest.goal
+          pane.goalActive = true
+        }
         paintPane(pane)
         break
-      case 'turn/end':
+      }
+      case 'turn/end': {
         pane.drafts.clear()
         // A snapshot replays old turns; only a live turn/end destroys the pane.
         // Otherwise opening the page on any session with history would remove
@@ -707,11 +739,21 @@
         if (historical) break
         pane.running = false
         pane.startedAt = 0
+        // A goal task is not finished when one round ends: the round driver
+        // queues the next round, and the agent reports idle in between. Keep the
+        // pane and show it waiting instead of tearing it down.
+        if (pane.goalActive || lastSessions.get(pane.id)?.goalActive === true) {
+          pane.goalActive = true
+          pane.goalWaiting = true
+          paintPane(pane)
+          break
+        }
         // A finished task owns no window: drop the pane immediately and keep the
         // next poll from recreating it while the host still reports it running.
         dismissed.add(pane.id)
         removePane(pane)
         break
+      }
       default:
         break
     }
@@ -1200,11 +1242,13 @@
     const title = el('div', 'pane-title', session.title || session.sessionId)
     const meta = el('div', 'pane-meta')
     const dot = el('span', 'dot')
+    const badge = el('span', 'goal-badge', '目标')
+    badge.hidden = session.goalActive !== true
     const status = el('span', 'pane-status', '连接中…')
     const elapsed = el('span', 'elapsed')
     elapsed.hidden = true
     const activity = el('span', 'activity')
-    meta.append(dot, status, elapsed, activity)
+    meta.append(dot, badge, status, elapsed, activity)
     head.append(title, meta)
     const jobsEl = el('div', 'jobs')
     jobsEl.hidden = true
@@ -1216,12 +1260,13 @@
       parentSessionId: typeof session.parentSessionId === 'string' ? session.parentSessionId : '',
       zcode: session.source === 'zcode' || String(session.sessionId || '').startsWith('z:'),
       running: session.running === true, streamState: streamOpen ? 'open' : 'connecting',
+      goal: session.goal, goalActive: session.goalActive === true, goalWaiting: false,
       items: [], live: null, liveNode: null, liveTool: null, liveToolNode: null, snapshot: false,
       createdAt: Date.now(), reopenedEmpty: false,
       lastSeq: null, resyncing: false, drafts: new Map(), pendingSnapshot: null, pendingDropped: 0,
       term: null, termNode: null, termText: '', termPlaceholder: false, termLiveHeader: false, termReasoningHeader: false,
       startedAt: 0, jobs: new Map(), jobsEl, elapsedEl: elapsed,
-      root, titleEl: title, dotEl: dot, statusEl: status, body,
+      root, titleEl: title, dotEl: dot, goalBadgeEl: badge, statusEl: status, body,
     }
     panes.set(pane.id, pane)
     dismissed.delete(pane.id)
@@ -1269,15 +1314,20 @@
       if (!response.ok) throw new Error(body && body.error ? body.error : '无法读取会话')
       const sessions = Array.isArray(body.items) ? body.items : []
       renderRecent(sessions)
-      const running = sessions.filter((session) => session.running === true)
-      const runningIds = new Set(running.map((session) => session.sessionId))
+      lastSessions.clear()
+      for (const session of sessions) lastSessions.set(session.sessionId, session)
+      // A durable goal keeps its Session active between rounds, when the agent
+      // itself reports idle; the goal phase decides that, not the agent status.
+      const activeSessions = sessions.filter((session) => session.running === true || session.goalActive === true)
+      const activeSessionIds = new Set(activeSessions.map((session) => session.sessionId))
       for (const id of [...dismissed]) {
-        if (!runningIds.has(id)) dismissed.delete(id)
+        if (!activeSessionIds.has(id)) dismissed.delete(id)
       }
-      const active = running
+      const active = activeSessions
         .filter((session) => !dismissed.has(session.sessionId))
         .sort((left, right) => (Number(right.updatedAt) || 0) - (Number(left.updatedAt) || 0))
       const activeIds = new Set(active.map((session) => session.sessionId))
+      const goalWaiting = active.filter((session) => session.goalActive === true && session.running !== true).length
       let needReopen = false
 
       const finished = []
@@ -1287,9 +1337,12 @@
           pane.title = session.title || pane.title
           pane.updatedAt = Number(session.updatedAt) || pane.updatedAt
           if (typeof session.parentSessionId === 'string') pane.parentSessionId = session.parentSessionId
+          pane.goal = session.goal
+          pane.goalActive = session.goalActive === true
+          if (!pane.goalActive) pane.goalWaiting = false
         }
         if (activeIds.has(pane.id)) {
-          if (!pane.running) pane.running = true
+          if (!pane.running && sessions.find((candidate) => candidate.sessionId === pane.id)?.running === true) pane.running = true
           if (pane.streamState === 'ended') needReopen = true
           paintPane(pane)
         } else {
@@ -1315,7 +1368,8 @@
       updateLayout()
       const shown = panes.size
       const extra = active.length > MAX_PANES ? ' · 显示前 4 个' : ''
-      setStatus(active.length === 0 ? '等待活跃任务…' : `${active.length} 个活跃任务${extra}`, active.length > 0)
+      const goalPart = goalWaiting > 0 ? ` · ${goalWaiting} 个目标` : ''
+      setStatus(active.length === 0 ? '等待活跃任务…' : `${active.length} 个活跃任务${goalPart}${extra}`, active.length > 0)
       setMeta(active.length, shown)
     } catch (error) {
       setStatus('读取活跃任务失败，重试中…', false)

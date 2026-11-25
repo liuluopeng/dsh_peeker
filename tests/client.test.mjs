@@ -103,6 +103,52 @@ function expansionDocument(rows) {
   return { document, listeners }
 }
 
+/** Page document that reports the composer as focused (no retry timers). */
+function focusedDocument() {
+  const activeElement = { closest: () => ({}) }
+  return { activeElement, querySelector: () => null, querySelectorAll: () => [] }
+}
+
+/**
+ * Fake right-sidebar controller: one on-screen Session, per-Session tabs, and
+ * the column's expanded state.
+ * @param options - starting on-screen Session, tabs per Session, expanded flag.
+ */
+function createSidebar({ mounted, terminals = {}, expanded = true } = {}) {
+  const state = { mounted, tabs: {}, expanded, opened: [], toggles: 0 }
+  for (const [sessionId, kinds] of Object.entries(terminals)) {
+    state.tabs[sessionId] = kinds.map((kind, index) => ({ id: sessionId + '-tab-' + index, kind }))
+  }
+  const listeners = new Set()
+  const sidebar = {
+    mounted: {
+      getSnapshot: () => state.mounted,
+      subscribe(listener) {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+    },
+    tabsIn: (sessionId) => state.tabs[sessionId] ?? [],
+    openTabIn: (sessionId, kind) => {
+      state.opened.push([sessionId, kind])
+      state.tabs[sessionId] = [...(state.tabs[sessionId] ?? []), { id: sessionId + '-auto', kind }]
+    },
+    isExpanded: () => state.expanded,
+    toggleExpanded: () => {
+      state.toggles += 1
+      state.expanded = !state.expanded
+    },
+  }
+  return {
+    sidebar,
+    state,
+    setMounted: (sessionId) => {
+      state.mounted = sessionId
+      for (const listener of listeners) listener()
+    },
+  }
+}
+
 /** Load the bundle and keep the sandbox so tests can reach injected globals. */
 function loadFace({ desktop = true, ui, document } = {}) {
   const sandbox = { console }
@@ -135,10 +181,11 @@ function loadFace({ desktop = true, ui, document } = {}) {
 }
 
 /** Fake client context: only the five injected services, with mutable snapshots. */
-function createContext(initial = []) {
+function createContext(initial = [], options = {}) {
   const state = { sessions: initial, archived: [] }
   const commands = new Map()
   const opened = []
+  const focused = []
   const ctx = {
     effect(execute) {
       const dispose = execute()
@@ -168,6 +215,20 @@ function createContext(initial = []) {
           phase: 'ready',
         }),
       },
+      scope(id) {
+        return state.sessions.some((row) => row.id === id) ? { id } : undefined
+      },
+    },
+    conversation: {
+      input: {
+        for(scope) {
+          return {
+            focus() {
+              focused.push(scope.id)
+            },
+          }
+        },
+      },
     },
     workspaces: {
       list: {
@@ -179,14 +240,15 @@ function createContext(initial = []) {
         opened.push(id)
       },
     },
+    ...(options.sidebarRight === undefined ? {} : { sidebarRight: options.sidebarRight }),
   }
-  return { ctx, commands, opened, state }
+  return { ctx, commands, opened, focused, state }
 }
 
 /** Activate the face against a context and return its command map, sandbox, and DOM. */
 function activate(options, sessions) {
   const sandbox = loadFace(options)
-  const fake = createContext(sessions)
+  const fake = createContext(sessions, { sidebarRight: options.sidebarRight })
   sandbox.row.factory(() => {
     throw new Error('the client face requires no other module')
   }).apply(fake.ctx)
@@ -215,7 +277,7 @@ test('manifest declares the client face the module table can serve', () => {
 
 test('registers next and previous Session on the Desktop profiles only', () => {
   const { commands } = activate({ desktop: true }, [session('a', { retainedBy: { mainView: 1 } })])
-  assert.deepEqual([...commands.keys()].sort(), ['lxPeek.sessionNext', 'lxPeek.sessionPrevious'])
+  assert.deepEqual([...commands.keys()].sort(), ['lxPeek.focusComposer', 'lxPeek.sessionNext', 'lxPeek.sessionPrevious'])
 
   for (const [id, code] of [['lxPeek.sessionNext', 'BracketRight'], ['lxPeek.sessionPrevious', 'BracketLeft']]) {
     const command = commands.get(id)
@@ -228,6 +290,14 @@ test('registers next and previous Session on the Desktop profiles only', () => {
     assert.deepEqual(plain(command.modals), ['sidebar'])
     assert.equal(typeof command.label(), 'string')
   }
+
+  const focus = commands.get('lxPeek.focusComposer')
+  assert.deepEqual(Object.keys(focus.defaults).sort(), ['desktop:linux', 'desktop:macos', 'desktop:windows'])
+  for (const profile of Object.keys(focus.defaults)) {
+    assert.deepEqual(plain(focus.defaults[profile]), { code: 'KeyI', modifiers: ['primary', 'shift'] })
+  }
+  assert.ok(plain(focus.regions).includes('terminal'), 'the key also works from the sidebar terminal')
+  assert.equal(typeof focus.label(), 'string')
 })
 
 test('registers nothing in a plain browser page', () => {
@@ -329,6 +399,107 @@ test('starts at either end when no Session is retained by the main view', () => 
   press(fake, 'lxPeek.sessionNext').run()
   press(fake, 'lxPeek.sessionPrevious').run()
   assert.deepEqual(fake.opened, ['a', 'b'])
+})
+
+test('hands the caret to the new composer after a switch', () => {
+  const fake = activate(
+    { desktop: true, document: focusedDocument() },
+    [session('a'), session('b', { retainedBy: { mainView: 1 } }), session('c')],
+  )
+
+  press(fake, 'lxPeek.sessionNext').run()
+  assert.deepEqual(fake.opened, ['c'])
+  assert.deepEqual(fake.focused, ['c'], 'the switched-to Session composer gets the caret back')
+})
+
+test('focuses the composer on demand', () => {
+  const fake = activate(
+    { desktop: true, document: focusedDocument() },
+    [session('a', { retainedBy: { mainView: 1 } }), session('b')],
+  )
+
+  const result = press(fake, 'lxPeek.focusComposer')
+  assert.equal(result.status, 'handled')
+  assert.deepEqual(fake.focused, [], 'resolving alone does not move focus')
+  result.run()
+  assert.deepEqual(fake.focused, ['a'], 'the current Session composer takes the caret')
+})
+
+test('blocks focus when no Session is shown', () => {
+  const fake = activate({ desktop: true, document: focusedDocument() }, [])
+  assert.deepEqual(plain(press(fake, 'lxPeek.focusComposer')), { status: 'blocked', reason: 'no-session' })
+  assert.deepEqual(fake.focused, [])
+})
+
+test('opens a terminal for the on-screen Session when it has none', () => {
+  const dom = createSidebar({ mounted: 'a' })
+  activate(
+    { desktop: true, ui: { autoTerminal: 'open' }, sidebarRight: dom.sidebar },
+    [session('a', { retainedBy: { mainView: 1 } })],
+  )
+
+  assert.deepEqual(dom.state.opened, [['a', 'terminal']], 'the Session gets one terminal tab')
+})
+
+test('hands the caret back to the composer after opening the terminal', () => {
+  const dom = createSidebar({ mounted: 'a' })
+  const fake = activate(
+    { desktop: true, ui: { autoTerminal: 'open' }, sidebarRight: dom.sidebar, document: focusedDocument() },
+    [session('a', { retainedBy: { mainView: 1 } })],
+  )
+
+  assert.deepEqual(dom.state.opened, [['a', 'terminal']])
+  assert.deepEqual(fake.focused, ['a'], 'the terminal would focus itself; the composer takes the caret back')
+})
+
+test('leaves a Session that already has a terminal alone', () => {
+  const dom = createSidebar({ mounted: 'a', terminals: { a: ['terminal'] } })
+  activate(
+    { desktop: true, ui: { autoTerminal: 'open' }, sidebarRight: dom.sidebar },
+    [session('a', { retainedBy: { mainView: 1 } })],
+  )
+
+  assert.deepEqual(dom.state.opened, [])
+})
+
+test('opens a terminal when the on-screen Session changes', () => {
+  const dom = createSidebar({ mounted: 'a', terminals: { a: ['terminal'] } })
+  activate(
+    { desktop: true, ui: { autoTerminal: 'open' }, sidebarRight: dom.sidebar },
+    [session('a', { retainedBy: { mainView: 1 } }), session('b')],
+  )
+  assert.deepEqual(dom.state.opened, [], 'the first Session already had one')
+
+  dom.setMounted('b')
+  assert.deepEqual(dom.state.opened, [['b', 'terminal']], 'the arriving Session gets its own terminal')
+})
+
+test('reveal expands a collapsed column that already holds a terminal', () => {
+  const dom = createSidebar({ mounted: 'a', terminals: { a: ['terminal'] }, expanded: false })
+  activate(
+    { desktop: true, ui: { autoTerminal: 'reveal' }, sidebarRight: dom.sidebar },
+    [session('a', { retainedBy: { mainView: 1 } })],
+  )
+
+  assert.equal(dom.state.toggles, 1)
+  assert.equal(dom.state.expanded, true)
+})
+
+test('open does not expand a collapsed column, and off does nothing', () => {
+  const open = createSidebar({ mounted: 'a', terminals: { a: ['terminal'] }, expanded: false })
+  activate(
+    { desktop: true, ui: { autoTerminal: 'open' }, sidebarRight: open.sidebar },
+    [session('a', { retainedBy: { mainView: 1 } })],
+  )
+  assert.equal(open.state.toggles, 0)
+
+  const off = createSidebar({ mounted: 'a', expanded: false })
+  activate(
+    { desktop: true, ui: { autoTerminal: 'off' }, sidebarRight: off.sidebar },
+    [session('a', { retainedBy: { mainView: 1 } })],
+  )
+  assert.deepEqual(off.state.opened, [])
+  assert.equal(off.state.toggles, 0)
 })
 
 test('opens collapsed reasoning rows by default', () => {

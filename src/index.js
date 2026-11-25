@@ -134,6 +134,29 @@ function sessionTitle(summary) {
 }
 
 /**
+ * Read the durable goal projection off one list row.
+ * A goal keeps its Session alive between rounds while the agent reports idle,
+ * so the durable phase — not the agent status — decides whether it is running.
+ * @param {any} item - one Session list item from the controller.
+ * @returns {{ phase: string, objective: string, roundsStarted: number, maxGoalRounds: number, createdAt: number } | undefined}
+ */
+function goalOf(item) {
+  const projection = item?.projections?.values?.goal
+  const goal = projection?.goal
+  if (goal === null || typeof goal !== 'object' || typeof goal.phase !== 'string') return undefined
+  const roundsStarted = Number(projection?.roundsStarted)
+  const maxGoalRounds = Number(goal.maxGoalRounds)
+  const createdAt = Number(projection?.createdAt)
+  return {
+    phase: goal.phase,
+    objective: String(goal.objective ?? '').slice(0, 160),
+    roundsStarted: Number.isFinite(roundsStarted) ? roundsStarted : 0,
+    maxGoalRounds: Number.isFinite(maxGoalRounds) ? maxGoalRounds : 0,
+    createdAt: Number.isFinite(createdAt) ? createdAt : 0,
+  }
+}
+
+/**
  * List sessions newest-running first.
  *
  * A subagent child carries its durable parent id so the stream can follow it
@@ -143,6 +166,10 @@ function sessionTitle(summary) {
  *
  * @param {import('@deepseek-ai/cordis').Context} ctx
  */
+function activityRank(session) {
+  return session.running === true || session.goalActive === true ? 1 : 0
+}
+
 async function listSessions(ctx) {
   const value = await ctx.sessionController.list({}, AbortSignal.timeout(8000))
   const items = Array.isArray(value?.items) ? value.items : []
@@ -150,18 +177,23 @@ async function listSessions(ctx) {
     // A subagent row without its durable parent cannot be followed; leave it out
     // instead of exposing a pane that can only fail.
     .filter((item) => item?.origin !== 'subagent' || typeof item?.parentSessionId === 'string')
-    .map((item) => ({
-      sessionId: String(item?.sessionId ?? ''),
-      title: sessionTitle(item),
-      cwd: typeof item?.cwd === 'string' ? item.cwd : '',
-      running: item?.running === true,
-      updatedAt: Number.isFinite(Number(item?.updatedAt)) ? Number(item.updatedAt) : 0,
-      ...(item?.origin === 'subagent' && typeof item?.parentSessionId === 'string'
-        ? { parentSessionId: item.parentSessionId }
-        : {}),
-    }))
+    .map((item) => {
+      const goal = goalOf(item)
+      return {
+        sessionId: String(item?.sessionId ?? ''),
+        title: sessionTitle(item),
+        cwd: typeof item?.cwd === 'string' ? item.cwd : '',
+        running: item?.running === true,
+        goalActive: goal !== undefined && goal.phase === 'active',
+        ...(goal === undefined ? {} : { goal }),
+        updatedAt: Number.isFinite(Number(item?.updatedAt)) ? Number(item.updatedAt) : 0,
+        ...(item?.origin === 'subagent' && typeof item?.parentSessionId === 'string'
+          ? { parentSessionId: item.parentSessionId }
+          : {}),
+      }
+    })
     .filter((item) => item.sessionId !== '')
-    .sort((left, right) => Number(right.running) - Number(left.running) || right.updatedAt - left.updatedAt)
+    .sort((left, right) => activityRank(right) - activityRank(left) || right.updatedAt - left.updatedAt)
 }
 
 /** Keep terminal job rows long enough for the page to render their final state. */
@@ -209,7 +241,7 @@ function lanAddresses() {
 /**
  * Mount the listener.
  * @param {import('@deepseek-ai/cordis').Context} ctx
- * @param {{ port?: number, fontSize?: number, codeFontSize?: number, terminalFontSize?: number, contentWidth?: number | 'fill', composerHeight?: number, expandReasoning?: 'off' | 'stream' | 'all' } | undefined} config
+ * @param {{ port?: number, fontSize?: number, codeFontSize?: number, terminalFontSize?: number, contentWidth?: number | 'fill', composerHeight?: number, expandReasoning?: 'off' | 'stream' | 'all', autoTerminal?: 'off' | 'open' | 'reveal' } | undefined} config
  */
 export function apply(ctx, config) {
   const port = Number(config?.port ?? 3082)
@@ -232,6 +264,13 @@ export function apply(ctx, config) {
   const composerHeight = Number(config?.composerHeight ?? 200)
   if (!Number.isInteger(composerHeight) || (composerHeight !== 0 && (composerHeight < 80 || composerHeight > 600))) {
     throw new Error(`lx_dsh_peek: composerHeight must be 0 (official height) or an integer from 80 to 600, got ${JSON.stringify(config?.composerHeight)}`)
+  }
+  // Official-UI terminal tabs are Session-scoped: a new Session starts without
+  // one. 'open' gives the on-screen Session a terminal tab when it has none,
+  // 'reveal' also expands a collapsed right column, 'off' leaves the UI alone.
+  const autoTerminal = config?.autoTerminal ?? 'open'
+  if (autoTerminal !== 'off' && autoTerminal !== 'open' && autoTerminal !== 'reveal') {
+    throw new Error(`lx_dsh_peek: autoTerminal must be 'off', 'open', or 'reveal', got ${JSON.stringify(config?.autoTerminal)}`)
   }
   // Official-UI reasoning rows: 'all' opens every collapsed Think row, 'stream'
   // opens only the row that is producing tokens, 'off' keeps the official
@@ -312,7 +351,7 @@ export function apply(ctx, config) {
       table.push({ kind: 'style', text: injectedStyle })
       // Read by the client face (src/client.js) through `globalThis`; the row
       // renders as one `globalThis[...] = {...}` script before the boot scripts.
-      table.push({ kind: 'global', name: '__lxDshPeekUi', value: { expandReasoning } })
+      table.push({ kind: 'global', name: '__lxDshPeekUi', value: { expandReasoning, autoTerminal } })
     })
     return () => { if (typeof off === 'function') off() }
   }, 'lx-dsh-peek:official-ui-overrides')
