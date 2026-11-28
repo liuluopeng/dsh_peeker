@@ -241,7 +241,7 @@ function lanAddresses() {
 /**
  * Mount the listener.
  * @param {import('@deepseek-ai/cordis').Context} ctx
- * @param {{ port?: number, fontSize?: number, codeFontSize?: number, terminalFontSize?: number, contentWidth?: number | 'fill', composerHeight?: number, expandReasoning?: 'off' | 'stream' | 'all', autoTerminal?: 'off' | 'open' | 'reveal' } | undefined} config
+ * @param {{ port?: number, fontSize?: number, codeFontSize?: number, terminalFontSize?: number, contentWidth?: number | 'fill', composerHeight?: number, expandReasoning?: 'off' | 'stream' | 'all', autoTerminal?: 'off' | 'open' | 'reveal', rightbarRatio?: number } | undefined} config
  */
 export function apply(ctx, config) {
   const port = Number(config?.port ?? 3082)
@@ -264,6 +264,14 @@ export function apply(ctx, config) {
   const composerHeight = Number(config?.composerHeight ?? 200)
   if (!Number.isInteger(composerHeight) || (composerHeight !== 0 && (composerHeight < 80 || composerHeight > 600))) {
     throw new Error(`lx_dsh_peek: composerHeight must be 0 (official height) or an integer from 80 to 600, got ${JSON.stringify(config?.composerHeight)}`)
+  }
+  // The right column keeps the width it was first opened at (a fraction of the
+  // window at that moment), so a window that grew afterwards leaves the terminal
+  // narrow. A ratio above 0 widens it to that fraction of the current window
+  // through the frame's own resize handle; 0 leaves the official default.
+  const rightbarRatio = config?.rightbarRatio ?? 0.55
+  if (typeof rightbarRatio !== 'number' || !Number.isFinite(rightbarRatio) || rightbarRatio < 0 || rightbarRatio > 0.7) {
+    throw new Error(`lx_dsh_peek: rightbarRatio must be a number from 0 to 0.7, got ${JSON.stringify(config?.rightbarRatio)}`)
   }
   // Official-UI terminal tabs are Session-scoped: a new Session starts without
   // one. 'open' gives the on-screen Session a terminal tab when it has none,
@@ -351,7 +359,7 @@ export function apply(ctx, config) {
       table.push({ kind: 'style', text: injectedStyle })
       // Read by the client face (src/client.js) through `globalThis`; the row
       // renders as one `globalThis[...] = {...}` script before the boot scripts.
-      table.push({ kind: 'global', name: '__lxDshPeekUi', value: { expandReasoning, autoTerminal } })
+      table.push({ kind: 'global', name: '__lxDshPeekUi', value: { expandReasoning, autoTerminal, rightbarRatio } })
     })
     return () => { if (typeof off === 'function') off() }
   }, 'lx-dsh-peek:official-ui-overrides')

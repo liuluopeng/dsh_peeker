@@ -245,7 +245,7 @@ test('injects the official UI font, taller composer, and conversation-width over
   const settings = table.find((row) => row.kind === 'global')
   assert.ok(settings, 'the client settings row is injected')
   assert.equal(settings.name, '__lxDshPeekUi')
-  assert.deepEqual(settings.value, { expandReasoning: 'all', autoTerminal: 'open' })
+  assert.deepEqual(settings.value, { expandReasoning: 'all', autoTerminal: 'open', rightbarRatio: 0.55 })
   assert.match(style.text, /--dsh-content-font-size: 34px !important/)
   assert.match(style.text, /--dsh-code-font-size: 24px !important/)
   assert.match(style.text, /--dsh-terminal-font-size: 24px !important/)
@@ -261,6 +261,12 @@ test('rejects an invalid composer height', () => {
   assert.throws(() => apply({}, { port, composerHeight: 40 }), /composerHeight/)
   assert.throws(() => apply({}, { port, composerHeight: 601 }), /composerHeight/)
   assert.throws(() => apply({}, { port, composerHeight: 1.5 }), /composerHeight/)
+})
+
+test('rejects an invalid right column ratio', () => {
+  assert.throws(() => apply({}, { port, rightbarRatio: 0.9 }), /rightbarRatio/)
+  assert.throws(() => apply({}, { port, rightbarRatio: -0.1 }), /rightbarRatio/)
+  assert.throws(() => apply({}, { port, rightbarRatio: 'wide' }), /rightbarRatio/)
 })
 
 test('rejects an invalid auto-terminal mode', () => {

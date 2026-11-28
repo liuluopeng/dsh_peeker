@@ -23,6 +23,7 @@ A deliberately small, read-only, **light** LAN view of the active DSH sessions �
 - The same host plugin can enlarge the official DSH UI's fonts, widen its conversation column, and raise its composer height from `cordis.patch.yml`, without a patched DMG.
 - Its client face adds the **missing desktop shortcut for switching conversations**: `⌘⇧]` next session, `⌘⇧[` previous, as rebindable application commands rather than a private key listener, walking the exact order the sidebar shows.
 - It also **opens Think rows by default** (the official UI has no such setting and keeps the collapsed body unmounted), with `expandReasoning: all | stream | off`.
+- **The right column opens wider** (`rightbarRatio`, default 0.55 of the window) instead of keeping the narrow width it was first opened at.
 - **Every Session keeps a terminal.** Terminal tabs are Session-scoped, so a new Session starts without one; the client face opens one for the on-screen Session automatically (`autoTerminal: off | open | reveal`).
 - **Goal-driven sessions count as active** even between rounds, when DSH's round driver is waiting and the agent reports idle: the page reads the durable `goal` projection and keeps a pane with a `目标` badge and `目标等待下一轮 · 第 N/M 轮`.
 - `⌘⇧I` puts the caret back in the composer from anywhere (a Session-scoped terminal keeps focus after a switch), and every session switch already hands the caret to the new conversation.
@@ -178,6 +179,19 @@ Terminal tabs in the right sidebar are registered per Session (`sidebar.right.pa
 
 Details: an opened terminal body focuses itself, so the switch hands the caret back to the composer (the same retrying handover the `⌘⇧]` commands use); the on-screen Session's right-sidebar store is adopted as its seat renders, so the first attempt is retried at 120 ms and 400 ms until the tab is placed; a Session that already has a terminal is left alone (no duplicates); and because it acts on Session changes only, a terminal you close by hand stays closed until you switch away and back. `reveal` goes through the column toggle, which focuses the active right pane — keep `open` if you want the composer caret to stay where the session switch put it.
 
+## Wider terminal column
+
+The frame keeps the right column at the width it was **first opened** at — 45 % of the window *at that moment* (`RIGHTBAR_DEFAULT_RATIO`) — and never rescales it, so opening the app in a small window once leaves the terminal narrow after you maximise. `ctx.layout` exposes no setter for it either.
+
+The client face widens the column to `rightbarRatio` (default **0.55**) of the current window by driving the frame's **own resize handle** with pointer events. The layout store receives a real drag, so the result behaves exactly like a manual drag: the official clamp (70 % of the window), the animation, and every later drag keep working.
+
+- It only ever widens — a column already at or above the target is left alone.
+- Dragging that handle yourself wins for the rest of the page load; the face stops nudging.
+- While the column is not shown (no handle yet) it retries, and it re-checks when the window is resized.
+- `rightbarRatio: 0` disables it; the value must be within 0–0.7.
+
+Because it drives a UI handle, it depends on the frame's `[data-side="rightbar"]` handle element; if a future UI drops that handle the nudge quietly does nothing and the official width stays.
+
 ## Goal sessions stay visible
 
 A session running a durable **goal** (DSH's 进行中的目标 / 深度求索中) is driven by the goal round driver: each round is a normal turn, and between rounds the driver waits for quiescence. During those gaps the Session's agent reports `status: 'running' === false`, so the plain "is the agent running" check — the one the official session list exposes — says *not active*, even though DSH keeps planning the next round.
@@ -263,6 +277,10 @@ Change the port, conversation width, font sizes, or reasoning expansion in `cord
         # when it has none, 'reveal' also expands the collapsed right column,
         # 'off' leaves the official per-Session terminal behaviour alone.
         autoTerminal: open
+        # Right column width as a fraction of the window (0–0.7, 0 disables).
+        # The official default keeps the width the column was first opened at,
+        # which is why it can look narrow after maximising the window.
+        rightbarRatio: 0.55
         archive:
           enabled: true
           apiBase: http://192.168.31.58:23000
@@ -346,7 +364,7 @@ The first test boots the plugin with a mock `sessionController` and `jobControll
 ### Layout
 
 - `src/index.js` — Host plugin, HTTP/SSE listener, session listing (including the goal projection that keeps goal Sessions active) and snapshot budget, optional `jobController` forwarding, multiplexed per-session frames, official-UI font/width style injection, ZCode source wiring.
-- `src/client.js` — client face served at runtime by `dsh.client`: registers the desktop `⌘⇧]` / `⌘⇧[` session commands through `ctx.shortcuts` (walking the sidebar's rendered row order), navigates with `ctx.uiWorkspace.openSession()` and hands the caret to the new composer, focuses the input on `⌘⇧I` (`ctx.conversation.input.for(scope).focus()`), opens a terminal for each on-screen Session (`autoTerminal`), and auto-opens collapsed Think rows (`expandReasoning`). No build step.
+- `src/client.js` — client face served at runtime by `dsh.client`: registers the desktop `⌘⇧]` / `⌘⇧[` session commands through `ctx.shortcuts` (walking the sidebar's rendered row order), navigates with `ctx.uiWorkspace.openSession()` and hands the caret to the new composer, focuses the input on `⌘⇧I` (`ctx.conversation.input.for(scope).focus()`), opens a terminal for each on-screen Session (`autoTerminal`), widens the right column (`rightbarRatio`), and auto-opens collapsed Think rows (`expandReasoning`). No build step.
 - `src/zcode.js` — read-only ZCode adapter over `~/.zcode/cli/db/db.sqlite`: running detection, snapshot mapping, store-polling watcher.
 - `src/archive.js` — always-on session archive: live `session/event` capture, full-log backfill through `sessionQuery.observeSession` (fallback `follow`/`page`), byte-bounded batches with `413` splitting, spool on outage, JWT auto-refresh.
 - `src/page.html` — light mobile page, active-task panes, one shared SSE connection, orientation layout, flash, recently-finished strip.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.17.0 — 2026-11-28
+
+- **The right column opens wider.** The official frame keeps the right column at the width it was first opened at — 45 % of the window *at that moment* — and never rescales it, so a window that grew afterwards (or a first open in a small window) leaves the terminal narrow; `ctx.layout` exposes no setter either. The client face now widens it to `rightbarRatio` (default **0.55**) of the current window by driving the frame's own resize handle with pointer events: the layout store takes a real drag, so the official clamp (70 % of the window), the animation and every later manual drag behave exactly as before.
+- Guards: it only ever widens (a column already at or above the target is left alone); a manual drag of that handle wins for the rest of the page load; it retries while the column is not shown yet and re-checks on window resize; `rightbarRatio: 0` disables it, and the value is validated to 0–0.7 at mount.
+- Config: `rightbarRatio` documented in `cordis.patch.yml` and carried in the `__lxDshPeekUi` global row with the other client settings.
+- Tests: three new client cases (widens a 540 px column to 1892 px on a 3440 px window and asserts the pointer sequence, leaves an already-wide column alone, and no-ops for a zero ratio or a missing handle), plus the host validation and global-row assertions — 61 tests total.
+
 ## 0.16.0 — 2026-11-25
 
 - **Every Session keeps a terminal.** Right-sidebar terminal tabs are Session-scoped (`sidebar.right.pane.tab` is registered with an injector that receives the `sessionId`), so each new Session started without one and the terminal rail's `+` was a per-Session click. The client face now watches `ctx.sidebarRight.mounted` — the on-screen Session — and opens a `terminal` tab for it whenever it has none, at startup and on every switch, new Sessions included. Opening the tab mounts its body, whose `TerminalView` allocates the terminal and launches the preferred shell (`remote.shells` → `preferredShell()`), i.e. exactly the path the `+` button takes.

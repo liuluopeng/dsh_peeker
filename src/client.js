@@ -261,6 +261,139 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** Right column geometry: the frame, its column, and the resize handle. */
+    const RIGHTBAR_COL = '[data-rightbar-col]'
+    const RIGHTBAR_HANDLE = '[data-side="rightbar"]'
+
+    /**
+     * Widen the right column to a fraction of the window.
+     *
+     * The official layout keeps the width the column was first opened at — a
+     * fraction of the window at that moment — and exposes no setter on
+     * `ctx.layout`. The frame's own resize handle is the one public way to
+     * change the stored value, so this drives it with pointer events, which
+     * leaves the layout exactly as if the reader had dragged it: the store
+     * updates, later drags keep working, and the clamp still applies.
+     *
+     * A manual drag wins for the rest of the page load; the nudge only ever
+     * widens (a column already at or above the target is left alone).
+     * @param ctx - client context.
+     * @param ratio - target width as a fraction of the window, or 0 to disable.
+     * @returns a disposer that stops watching the frame.
+     */
+    function installRightbarWidth(ctx, ratio) {
+      if (!(typeof ratio === 'number' && ratio > 0)) return () => {}
+      const doc = globalThis.document
+      if (doc === undefined || doc === null || typeof doc.querySelector !== 'function') return () => {}
+      const view = globalThis
+      let disposed = false
+      let userAdjusted = false
+      let widened = false
+      let timer = null
+      let attempts = 0
+
+      const columnWidth = () => {
+        const column = doc.querySelector(RIGHTBAR_COL)
+        if (column === null || column === undefined) return undefined
+        const rect = typeof column.getBoundingClientRect === 'function' ? column.getBoundingClientRect() : undefined
+        const width = Number(rect?.width)
+        return Number.isFinite(width) && width > 0 ? width : undefined
+      }
+
+      const windowWidth = () => {
+        const width = Number(view.innerWidth)
+        if (Number.isFinite(width) && width > 0) return width
+        const fallback = Number(doc.documentElement?.clientWidth)
+        return Number.isFinite(fallback) && fallback > 0 ? fallback : 0
+      }
+
+      /** Drive the frame's handle by one synthetic drag, capture calls neutralised. */
+      const dragWider = (handle, delta) => {
+        const Pointer = view.PointerEvent
+        if (typeof Pointer !== 'function' || typeof handle.dispatchEvent !== 'function') return
+        const proto = view.Element === undefined ? undefined : view.Element.prototype
+        const saved = proto === undefined ? undefined : {
+          set: proto.setPointerCapture, release: proto.releasePointerCapture, has: proto.hasPointerCapture,
+        }
+        try {
+          // A synthetic pointer has no active capture target; the handle only
+          // uses these three calls to track its own drag.
+          if (proto !== undefined) {
+            proto.setPointerCapture = () => {}
+            proto.releasePointerCapture = () => {}
+            proto.hasPointerCapture = () => false
+          }
+          const rect = typeof handle.getBoundingClientRect === 'function' ? handle.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 }
+          const x = rect.left + rect.width / 2
+          const y = rect.top + rect.height / 2
+          const shared = { bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: 'mouse', isPrimary: true, clientY: y }
+          handle.dispatchEvent(new Pointer('pointerdown', { ...shared, button: 0, buttons: 1, clientX: x }))
+          handle.dispatchEvent(new Pointer('pointermove', { ...shared, button: -1, buttons: 1, clientX: x - delta }))
+          handle.dispatchEvent(new Pointer('pointerup', { ...shared, button: 0, buttons: 0, clientX: x - delta }))
+          widened = true
+        } catch (error) {
+          console.warn('[lx_dsh_peek] right column widen failed:', error)
+        } finally {
+          if (proto !== undefined && saved !== undefined) {
+            proto.setPointerCapture = saved.set
+            proto.releasePointerCapture = saved.release
+            proto.hasPointerCapture = saved.has
+          }
+        }
+      }
+
+      const widen = () => {
+        if (disposed || userAdjusted || widened) return
+        const width = windowWidth()
+        const current = columnWidth()
+        if (width <= 0 || current === undefined) return
+        const target = Math.round(width * ratio)
+        if (current >= target) return
+        const handle = doc.querySelector(RIGHTBAR_HANDLE)
+        // The handle exists only while the column is shown; retry until it is.
+        if (handle === null || handle === undefined) {
+          if (attempts < 8) {
+            attempts += 1
+            const later = view.setTimeout
+            if (typeof later === 'function') timer = later(() => { timer = null; widen() }, 500)
+          }
+          return
+        }
+        dragWider(handle, target - current)
+      }
+
+      const onPointerDown = (event) => {
+        const target = event?.target
+        if (target === null || target === undefined || typeof target.closest !== 'function') return
+        if (target.closest(RIGHTBAR_HANDLE) !== null) userAdjusted = true
+      }
+      const onResize = () => {
+        if (disposed || userAdjusted) return
+        attempts = 0
+        widen()
+      }
+      doc.addEventListener?.('pointerdown', onPointerDown, true)
+      doc.addEventListener?.('resize', onResize)
+
+      const Observer = view.MutationObserver
+      let observer
+      if (typeof Observer === 'function' && doc.body !== undefined && doc.body !== null) {
+        observer = new Observer(() => { if (!widened && !userAdjusted) { attempts = 0; widen() } })
+        observer.observe(doc.body, { childList: true, subtree: true })
+      }
+      widen()
+      const later = view.setTimeout
+      if (typeof later === 'function') timer = later(() => { timer = null; widen() }, 800)
+
+      return () => {
+        disposed = true
+        if (timer !== null && typeof view.clearTimeout === 'function') view.clearTimeout(timer)
+        doc.removeEventListener?.('pointerdown', onPointerDown, true)
+        doc.removeEventListener?.('resize', onResize)
+        if (observer !== undefined) observer.disconnect()
+      }
+    }
+
     /**
      * Open collapsed Think rows as they appear, in the official page.
      * The reader's manual collapse is remembered so the scan never fights them.
@@ -462,8 +595,10 @@ window.__ModuleLoader__.load({
       const settings = globalThis.__lxDshPeekUi ?? {}
       const expandReasoning = settings.expandReasoning ?? 'off'
       const autoTerminal = settings.autoTerminal ?? 'off'
+      const rightbarRatio = settings.rightbarRatio ?? 0
       ctx.effect(() => installReasoningAutoExpand(expandReasoning), 'lx_dsh_peek: reasoning expansion')
       ctx.effect(() => installAutoTerminal(ctx, autoTerminal), 'lx_dsh_peek: auto terminal')
+      ctx.effect(() => installRightbarWidth(ctx, rightbarRatio), 'lx_dsh_peek: right column width')
 
       // The Electron shell is the only target for the keys: the client table
       // also loads this bundle in a plain browser page, where ⌘⇧[ / ⌘⇧] belong

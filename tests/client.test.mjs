@@ -103,6 +103,42 @@ function expansionDocument(rows) {
   return { document, listeners }
 }
 
+/**
+ * Page document exposing the frame's right column and its resize handle.
+ * The fake handle mirrors the frame's drag maths: a pointerup widens the column
+ * by the drag distance, so the test asserts the real end state.
+ * @param options - window width and the column's current width.
+ */
+function rightbarDocument({ innerWidth = 3440, columnWidth = 540 } = {}) {
+  const state = { columnWidth, events: [], origin: null }
+  const handle = {
+    getBoundingClientRect: () => ({ left: innerWidth - state.columnWidth, top: 40, width: 6, height: 900 }),
+    dispatchEvent(event) {
+      state.events.push({ type: event.type, clientX: event.clientX })
+      if (event.type === 'pointerdown') state.origin = event.clientX
+      if (event.type === 'pointerup' && state.origin !== null) {
+        state.columnWidth += state.origin - event.clientX
+        state.origin = null
+      }
+      return true
+    },
+  }
+  const column = { getBoundingClientRect: () => ({ left: innerWidth - state.columnWidth, top: 40, width: state.columnWidth, height: 900 }) }
+  const document = {
+    body: {},
+    documentElement: { clientWidth: innerWidth },
+    querySelector: (selector) => {
+      if (selector === '[data-rightbar-col]') return column
+      if (selector === '[data-side="rightbar"]') return handle
+      return null
+    },
+    querySelectorAll: () => [],
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }
+  return { document, state, handle }
+}
+
 /** Page document that reports the composer as focused (no retry timers). */
 function focusedDocument() {
   const activeElement = { closest: () => ({}) }
@@ -150,7 +186,7 @@ function createSidebar({ mounted, terminals = {}, expanded = true } = {}) {
 }
 
 /** Load the bundle and keep the sandbox so tests can reach injected globals. */
-function loadFace({ desktop = true, ui, document } = {}) {
+function loadFace({ desktop = true, ui, document, innerWidth } = {}) {
   const sandbox = { console }
   sandbox.window = sandbox
   sandbox.__ModuleLoader__ = {
@@ -163,6 +199,14 @@ function loadFace({ desktop = true, ui, document } = {}) {
   if (document !== undefined) {
     sandbox.document = document
     sandbox.requestAnimationFrame = (run) => run()
+    if (innerWidth !== undefined) sandbox.innerWidth = innerWidth
+    sandbox.Element = class {}
+    sandbox.PointerEvent = class {
+      constructor(type, init) {
+        this.type = type
+        Object.assign(this, init ?? {})
+      }
+    }
     sandbox.MutationObserver = class {
       constructor(callback) {
         this.callback = callback
@@ -500,6 +544,45 @@ test('open does not expand a collapsed column, and off does nothing', () => {
   )
   assert.deepEqual(off.state.opened, [])
   assert.equal(off.state.toggles, 0)
+})
+
+test('widens the right column to the configured fraction of the window', () => {
+  const dom = rightbarDocument({ innerWidth: 3440, columnWidth: 540 })
+  activate(
+    { desktop: true, ui: { rightbarRatio: 0.55 }, document: dom.document, innerWidth: 3440 },
+    [session('a', { retainedBy: { mainView: 1 } })],
+  )
+
+  assert.equal(dom.state.columnWidth, 1892, '3440 × 0.55')
+  assert.deepEqual(dom.state.events.map((event) => event.type), ['pointerdown', 'pointermove', 'pointerup'])
+})
+
+test('leaves a right column that is already wide enough alone', () => {
+  const dom = rightbarDocument({ innerWidth: 3440, columnWidth: 2000 })
+  activate(
+    { desktop: true, ui: { rightbarRatio: 0.55 }, document: dom.document, innerWidth: 3440 },
+    [session('a', { retainedBy: { mainView: 1 } })],
+  )
+
+  assert.deepEqual(dom.state.events, [])
+  assert.equal(dom.state.columnWidth, 2000)
+})
+
+test('leaves the right column alone when the ratio is zero or the handle is absent', () => {
+  const disabled = rightbarDocument({ columnWidth: 540 })
+  activate(
+    { desktop: true, ui: { rightbarRatio: 0 }, document: disabled.document, innerWidth: 3440 },
+    [session('a', { retainedBy: { mainView: 1 } })],
+  )
+  assert.deepEqual(disabled.state.events, [])
+
+  const noHandle = rightbarDocument({ columnWidth: 540 })
+  noHandle.document.querySelector = (selector) => (selector === '[data-rightbar-col]' ? noHandle.document.querySelector : null)
+  assert.doesNotThrow(() => activate(
+    { desktop: true, ui: { rightbarRatio: 0.55 }, document: noHandle.document, innerWidth: 3440 },
+    [session('a', { retainedBy: { mainView: 1 } })],
+  ))
+  assert.deepEqual(noHandle.state.events, [])
 })
 
 test('opens collapsed reasoning rows by default', () => {
